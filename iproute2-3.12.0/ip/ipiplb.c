@@ -148,19 +148,19 @@ usage (void)
 {
 	fprintf (stderr,
 		 "\n"
-		 "Usage: ip sr [ { add | del } ] [ { prefix | relay } ]\n"
+		 "Usage: ip iplb [ { add | del } ] [ { prefix | relay } ]\n"
 		 "             [ prefix PREFIX/LEN ]\n"
 		 "             [ relay ADDRESS ]\n"
 		 "             [ weight WEIGHT ]\n"
 		 "\n"
-		 "       ip sr set weight\n"
+		 "       ip iplb set weight\n"
 		 "             [ prefix PREFIX/LEN ]\n"
 		 "             [ relay ADDRESS ]\n"
 		 "             [ weight WEIGHT ]\n"
 		 "\n"
-		 "       ip sr set lookup [ { weightbase | hashbase } ]\n"
+		 "       ip iplb set lookup [ { weightbase | hashbase } ]\n"
 		 "\n"
-		 "       ip sr show [ inet | inet6 ]\n"
+		 "       ip iplb show [ inet | inet6 ]\n"
 		);
 
 		exit (-1);

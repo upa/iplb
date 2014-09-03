@@ -14,6 +14,8 @@
 #define DEBUG
 #endif
 
+#define WITH_GRE
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/list.h>
@@ -47,8 +49,13 @@ MODULE_LICENSE ("GPL");
 MODULE_AUTHOR ("upa@haeena.net");
 
 
-#define IPV4_IPIP_HEADROOM	(sizeof (struct iphdr) + 16)
-#define IPV6_IPIP_HEADROOM	(sizeof (struct ipv6hdr) + 16)
+#ifdef WITH_GRE
+#define IPV4_IPIP_HEADROOM	(8 + 20 + 16)
+#define IPV6_IPIP_HEADROOM	(8 + 40 + 16)
+#else
+#define IPV4_IPIP_HEADROOM	(20 + 16)
+#define IPV6_IPIP_HEADROOM	(40 + 16)
+#endif
 
 
 #define ADDR4COPY(s, d) *(((u32 *)(d))) = *(((u32 *)(s)))
@@ -471,6 +478,14 @@ ipv4_set_ipip_encap (struct sk_buff * skb, struct detour_addr * detour,
 {
 	struct iphdr	* iph, * ipiph;
 
+#ifdef WITH_GRE
+	struct grehdr {
+		__be16	flags;
+		__be16	protocol;
+	};
+	struct grehdr * greh;
+#endif
+
 	iph = (struct iphdr *) skb_network_header (skb);
 
 	if (skb_cow_head (skb, IPV4_IPIP_HEADROOM)) {
@@ -479,21 +494,40 @@ ipv4_set_ipip_encap (struct sk_buff * skb, struct detour_addr * detour,
 		return;
 	}
 
-	ipiph = (struct iphdr *) __skb_push (skb, sizeof(struct iphdr));
+#ifdef WITH_GRE
+	ipiph = (struct iphdr *) __skb_push (skb, sizeof (struct iphdr) + 
+					     sizeof (struct grehdr));
+#else
+	ipiph = (struct iphdr *) __skb_push (skb, sizeof (struct iphdr));
+#endif
 	skb_reset_network_header (skb);
 
 	ipiph->version	= IPVERSION;
 	ipiph->ihl	= sizeof (struct iphdr) >> 2;
 	ipiph->tos	= 0;
-	ipiph->tot_len	= htons (ntohs (iph->tot_len) + sizeof (struct iphdr));
 	ipiph->frag_off	= 0;
 	ipiph->ttl	= 16;
+
+#ifdef WITH_GRE
+	ipiph->tot_len	= htons (ntohs (iph->tot_len) + sizeof (struct grehdr)
+		+ sizeof (struct iphdr));
+	ipiph->protocol = IPPROTO_GRE;
+#else
+	ipiph->tot_len	= htons (ntohs (iph->tot_len) + sizeof (struct iphdr));
 	ipiph->protocol = IPPROTO_IPIP;
+#endif
+
 	ipiph->check	= 0;
 	ipiph->saddr	= iplb_net->tunnel_src;
 	ipiph->daddr	= *detour->detour_ip4;
 	ipiph->check	= wrapsum (checksum (ipiph, sizeof (struct iphdr), 0));
 
+
+#ifdef WITH_GRE
+	greh = (struct grehdr *) (ipiph + 1);
+	greh->flags	= 0;
+	greh->protocol	= htons (ETH_P_IP);
+#endif
 
 	return;
 }
