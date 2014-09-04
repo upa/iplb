@@ -74,6 +74,9 @@ MODULE_AUTHOR ("upa@haeena.net");
 	 *(((u32 *)(d)) + 3) == *(((u32 *)(s)) + 3))		 \
 
 
+#define IPTRANSPORTHDR(ip) (((char *)(ip)) + ((ip)->ihl << 2))
+
+
 static unsigned int iplb_net_id;
 static u32 iplb_salt __read_mostly;
 
@@ -544,13 +547,13 @@ ipv4_flow_hash (struct sk_buff * skb)
 
 	switch (ip->protocol) {
 	case IPPROTO_TCP :
-		tcp = (struct tcphdr *) skb_transport_header (skb);
+		tcp = (struct tcphdr *) IPTRANSPORTHDR (ip);
 		val1 = tcp->source;
 		val1 <<= 16;
 		val1 += tcp->dest;
 		break;
 	case IPPROTO_UDP :
-		udp = (struct udphdr *) skb_transport_header (skb);
+		udp = (struct udphdr *) IPTRANSPORTHDR (ip);
 		val1 = udp->source;
 		val1 <<= 16;
 		val1 += udp->dest;
