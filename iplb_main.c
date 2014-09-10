@@ -14,8 +14,6 @@
 #define DEBUG
 #endif
 
-#define WITH_GRE
-
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/list.h>
@@ -49,14 +47,10 @@ MODULE_LICENSE ("GPL");
 MODULE_AUTHOR ("upa@haeena.net");
 
 
-#ifdef WITH_GRE
-#define IPV4_IPIP_HEADROOM	(8 + 20 + 16)
-#define IPV6_IPIP_HEADROOM	(8 + 40 + 16)
-#else
+#define IPV4_GER_HEADROOM	(8 + 20 + 16)
+#define IPV6_GRE_HEADROOM	(8 + 40 + 16)
 #define IPV4_IPIP_HEADROOM	(20 + 16)
 #define IPV6_IPIP_HEADROOM	(40 + 16)
-#endif
-
 
 
 #define ADDR4COPY(s, d) *(((u32 *)(d))) = *(((u32 *)(s)))
@@ -523,7 +517,7 @@ ipv4_set_gre_encap (struct sk_buff * skb, struct detour_addr * detour,
 
 	iph = (struct iphdr *) skb_network_header (skb);
 
-	if (skb_cow_head (skb, IPV4_IPIP_HEADROOM)) {
+	if (skb_cow_head (skb, IPV4_GRE_HEADROOM)) {
 		printk (KERN_INFO "%s:%d: skb_cow_head failed\n",
 			__func__, __LINE__);
 		return;
