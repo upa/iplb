@@ -39,17 +39,20 @@ struct iplb_param {
 		struct in6_addr	relay6;
 	} relay;
 	
-	__u8		length;
-	__u8		weight;
+	__u8	length;
+	__u8	weight;
+	__u8	encap_type;
 
 	int	family;
 	int	prefix_family;
 	int	relay_family;
 	int	weight_flag;
+	int	encap_type_flag;
 
 	int	lookup_weightbase;
 	int	lookup_hashbase;
 };
+
 
 static void usage (void) __attribute ((noreturn));
 
@@ -121,10 +124,23 @@ parse_args (int argc, char ** argv, struct iplb_param * p)
 		} else if (strcmp (*argv, "weight") == 0) {
 			NEXT_ARG ();
 			if (get_u8 (&p->weight, *argv, 0)) {
-				invarg ("invalid weight", * argv);
+				invarg ("invalid weight", *argv);
 				exit (-1);
 			}
 			p->weight_flag = 1;
+		} else if (strcmp (*argv, "type") == 0) {
+			NEXT_ARG ();
+			if (strcmp (*argv, "gre") == 0) {
+				p->encap_type = IPLB_ENCAP_TYPE_GRE;
+			} else if (strcmp (*argv, "ipip") == 0) {
+				p->encap_type = IPLB_ENCAP_TYPE_IPIP;
+			} else if (strcmp (*argv, "lsrr") == 0) {
+				p->encap_type = IPLB_ENCAP_TYPE_LSRR;
+			} else {
+				invarg ("invalid type \"%s\"", *argv);
+				exit (-1);
+			}
+			p->encap_type_flag = 1;
 		} else if (strcmp (*argv, "inet") == 0) {
 			p->family = AF_INET;
 		} else if (strcmp (*argv, "inet6") == 0) {
@@ -152,6 +168,7 @@ usage (void)
 		 "             [ prefix PREFIX/LEN ]\n"
 		 "             [ relay ADDRESS ]\n"
 		 "             [ weight WEIGHT ]\n"
+		 "             [ type { gre | ipip | lsrr } ]\n"
 		 "\n"
 		 "       ip iplb set weight\n"
 		 "             [ prefix PREFIX/LEN ]\n"
@@ -268,6 +285,10 @@ do_add_relay (int argc, char ** argv)
 	}
 
 	addattr8 (&req.n, 1024, IPLB_ATTR_WEIGHT, weight);
+
+	if (p.encap_type_flag) {
+		addattr8 (&req.n, 1024, IPLB_ATTR_ENCAP_TYPE, p.encap_type);
+	}
 
 	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
 		return -2;
@@ -510,10 +531,14 @@ static int
 prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 {
 	int len, family = 0, prefix_family = 0, relay_family = 0;
-	__u8 weight, length;
+	__u8 weight, length, encap_type;
 	char addr[16], addrbuf1[64], addrbuf2[64];
 	struct genlmsghdr * ghdr;
 	struct rtattr *attrs[IPLB_ATTR_MAX + 1];
+
+	char * encap_type_name[] = {
+		"gre", "ipip", "lsrr"
+	};
 
 	memset (addr, 0, sizeof (addr));
 	memset (addrbuf1, 0, sizeof (addrbuf1));
@@ -575,13 +600,21 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 		}
 	}
 
+	if (attrs[IPLB_ATTR_ENCAP_TYPE]) {
+		encap_type = rta_getattr_u8 (attrs[IPLB_ATTR_ENCAP_TYPE]);
+	} else {
+		fprintf (stderr, "%s: encap type does not exist\n",
+			 __func__);
+		return -1;
+	}
 
 	if (relay_family) {
 		inet_ntop (family, RTA_DATA (attrs[relay_family]),
 			   addrbuf2, sizeof (addrbuf2));
 
-		fprintf (stdout, "prefix %s/%d relay %s weight %d\n",
-			 addrbuf1, length, addrbuf2, weight);
+		fprintf (stdout, "prefix %s/%d relay %s weight %d type %s\n",
+			 addrbuf1, length, addrbuf2, weight,
+			 encap_type_name[encap_type]);
 	} else {
 		fprintf (stdout, "prefix %s/%d relay none\n",
 			 addrbuf1, length);

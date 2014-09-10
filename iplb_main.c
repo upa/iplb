@@ -1091,11 +1091,6 @@ iplb_nl_cmd_relay4_add (struct sk_buff * skb, struct genl_info * info)
 		weight = nla_get_u8 (info->attrs[IPLB_ATTR_WEIGHT]);
 	}
 
-	if (weight > 255) {
-		pr_debug ("%s: weight must be smaller than 256", __func__);
-		return -EINVAL;
-	}
-
 	if (!info->attrs[IPLB_ATTR_ENCAP_TYPE]) {
 		encap_type = IPLB_ENCAP_TYPE_GRE;
 	} else {
@@ -1144,11 +1139,6 @@ iplb_nl_cmd_relay6_add (struct sk_buff * skb, struct genl_info * info)
 		weight = 100;
 	}
 	weight = nla_get_u8 (info->attrs[IPLB_ATTR_WEIGHT]);
-
-	if (weight > 255) {
-		pr_debug ("%s: weight must be smaller than 256", __func__);
-		return -EINVAL;
-	}
 
 	if (!info->attrs[IPLB_ATTR_ENCAP_TYPE]) {
 		encap_type = IPLB_ENCAP_TYPE_GRE;
@@ -1325,7 +1315,8 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	    nla_put (skb, relay_attr, addrlen, &detour->detour_ip) ||
 	    nla_put_u8 (skb, IPLB_ATTR_PREFIX_LENGTH,
 			detour->tuple->prefix->bitlen) ||
-	    nla_put_u8 (skb, IPLB_ATTR_WEIGHT, detour->weight))
+	    nla_put_u8 (skb, IPLB_ATTR_WEIGHT, detour->weight) ||
+	    nla_put_u8 (skb, IPLB_ATTR_ENCAP_TYPE, detour->encap_type))
 		goto error_out;
 
 	return genlmsg_end (skb, hdr);
