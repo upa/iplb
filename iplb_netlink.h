@@ -28,6 +28,8 @@
  * ROUTE6_GET		- none : get routeing entry, pre, len, rec, weight
  *
  * WEIGHT_SET		- v4/6pref, len, rec4/rec6, weight
+ * SRC4_SET		- v4 addr : set tunnel src address
+ * SRC6_SET		- v6 addr : set tunnel src address
  *
  * LOOKUP_WEIGHTBASE	- none : set lookup function weightbase
  * LOOKUP_HASHTBASE	- none : set lookup function hashbase
@@ -49,6 +51,11 @@ enum {
 	IPLB_CMD_PREFIX6_GET,
 	
 	IPLB_CMD_WEIGHT_SET,
+	IPLB_CMD_SRC4_SET,
+	IPLB_CMD_SRC6_SET,
+
+	IPLB_CMD_SRC4_GET,
+	IPLB_CMD_SRC6_GET,
 
 	IPLB_CMD_LOOKUP_WEIGHTBASE,
 	IPLB_CMD_LOOKUP_HASHBASE,
@@ -78,7 +85,9 @@ enum {
 	IPLB_ATTR_RELAY4,		/* 32 bit 	*/
 	IPLB_ATTR_RELAY6,		/* 128 bit	*/
 	IPLB_ATTR_WEIGHT,		/* 8 bit 	*/
-	IPLB_ATTR_ENCAP_TYPE,		/* 8bit		*/
+	IPLB_ATTR_ENCAP_TYPE,		/* 8 bit	*/
+	IPLB_ATTR_SRC4,			/* 3 2bit	*/
+	IPLB_ATTR_SRC6,			/* 12 bit	*/
 
 	__IPLB_ATTR_MAX,
 };

@@ -1,5 +1,5 @@
 /*
- * ipiplb.c control for IPLB
+ * iplb.c control for IPLB
  */
 
 #include <errno.h>
@@ -39,15 +39,20 @@ struct iplb_param {
 		struct in6_addr	relay6;
 	} relay;
 	
+	union {
+		struct in_addr	src4;
+		struct in6_addr	src6;
+	} src;
+
 	__u8	length;
 	__u8	weight;
 	__u8	encap_type;
 
-	int	family;
 	int	prefix_family;
 	int	relay_family;
 	int	weight_flag;
 	int	encap_type_flag;
+	int	src_family;
 
 	int	lookup_weightbase;
 	int	lookup_hashbase;
@@ -141,10 +146,16 @@ parse_args (int argc, char ** argv, struct iplb_param * p)
 				exit (-1);
 			}
 			p->encap_type_flag = 1;
-		} else if (strcmp (*argv, "inet") == 0) {
-			p->family = AF_INET;
-		} else if (strcmp (*argv, "inet6") == 0) {
-			p->family = AF_INET6;
+		} else if (strcmp (*argv, "src") == 0) {
+			NEXT_ARG ();
+			if (inet_pton (AF_INET, *argv, &p->src) > 0)
+				p->src_family = AF_INET;
+			else if (inet_pton (AF_INET6, *argv, &p->src) > 0)
+				p->src_family = AF_INET6;
+			else {
+				invarg ("invalid src", *argv);
+				exit (-1);
+			}
 		} else if (strcmp (*argv, "weightbase") == 0) {
 			p->lookup_weightbase = 1;
 		} else if (strcmp (*argv, "hashbase") == 0) {
@@ -164,20 +175,23 @@ usage (void)
 {
 	fprintf (stderr,
 		 "\n"
-		 "Usage: ip iplb [ { add | del } ] [ { prefix | relay } ]\n"
+		 "Usage: ip lb [ { add | del } ] [ { prefix | relay } ]\n"
 		 "             [ prefix PREFIX/LEN ]\n"
 		 "             [ relay ADDRESS ]\n"
 		 "             [ weight WEIGHT ]\n"
 		 "             [ type { gre | ipip | lsrr } ]\n"
 		 "\n"
-		 "       ip iplb set weight\n"
+		 "       ip lb set weight\n"
 		 "             [ prefix PREFIX/LEN ]\n"
 		 "             [ relay ADDRESS ]\n"
 		 "             [ weight WEIGHT ]\n"
 		 "\n"
-		 "       ip iplb set lookup [ { weightbase | hashbase } ]\n"
+		 "       ip lb set lookup [ { weightbase | hashbase } ]\n"
 		 "\n"
-		 "       ip iplb show [ inet | inet6 ]\n"
+		 "       ip lb set tunnel src [ ADDRESS ]\n"
+		 "\n"
+		 "       ip lb show { tunnel }\n"
+		 "\n"
 		);
 
 		exit (-1);
@@ -510,6 +524,38 @@ do_set_lookup (int argc, char ** argv)
 }
 
 static int
+do_set_tunnel (int argc, char ** argv)
+{
+	struct iplb_param p;
+
+	parse_args (argc, argv, &p);
+
+	GENL_REQUEST (req, 1024, genl_family, 0, IPLB_GENL_VERSION,
+		      0, NLM_F_REQUEST | NLM_F_ACK);
+
+	switch (p.src_family) {
+	case AF_INET :
+		req.g.cmd = IPLB_CMD_SRC4_SET;
+		addattr_l (&req.n, 1024, IPLB_ATTR_SRC4, &p.src,
+			   sizeof (struct in_addr));
+		break;
+	case AF_INET6 :
+		req.g.cmd = IPLB_CMD_SRC6_SET;
+		addattr_l (&req.n, 1024, IPLB_ATTR_SRC6, &p.src,
+			   sizeof (struct in6_addr));
+		break;
+	default :
+		fprintf (stderr, "invalid tunnel src type\n");;
+		return -1;
+	}
+
+	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
+		return -2;
+
+	return 0;
+}
+
+static int
 do_set (int argc, char ** argv)
 {
 	if (argc < 1) {
@@ -522,6 +568,9 @@ do_set (int argc, char ** argv)
 
 	if (strcmp (*argv, "lookup") == 0)
 		return do_set_lookup (argc - 1, argv + 1);
+
+	if (strcmp (*argv, "tunnel") == 0)
+		return do_set_tunnel (argc - 1, argv + 1);
 
 	fprintf (stderr, "unknown command \"%s\".\n", *argv);
 	return -1;
@@ -624,18 +673,85 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 }
 
 static int
+tunnel_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
+{
+	int len;
+	char addrbuf[16];
+	struct genlmsghdr * ghdr;
+	struct rtattr * attrs[IPLB_ATTR_MAX + 1];
+
+	if (n->nlmsg_type == NLMSG_ERROR)
+		return -EBADMSG;
+
+	ghdr = NLMSG_DATA (n);
+	len = n->nlmsg_len - NLMSG_LENGTH (sizeof (*ghdr));
+	if (len < 0)
+		return -1;
+
+	parse_rtattr (attrs, IPLB_ATTR_MAX, (void *) ghdr + GENL_HDRLEN, len);
+
+	if (attrs[IPLB_ATTR_SRC4]) {
+		inet_ntop (AF_INET, RTA_DATA (attrs[IPLB_ATTR_SRC4]),
+			   addrbuf, sizeof (addrbuf));
+		printf ("%s\n", addrbuf);
+	}
+
+	if (attrs[IPLB_ATTR_SRC6]) {
+		inet_ntop (AF_INET6, RTA_DATA (attrs[IPLB_ATTR_SRC6]),
+			   addrbuf, sizeof (addrbuf));
+		printf ("%s\n", addrbuf);
+	}
+
+	return 0;
+}
+
+static int
+do_show_tunnel (void)
+{
+	int ret, cmd;
+
+	switch (preferred_family) {
+	case AF_UNSPEC :
+	case AF_INET :
+		cmd = IPLB_CMD_SRC4_GET;
+		break;
+	case AF_INET6 :
+		cmd = IPLB_CMD_SRC6_GET;
+		break;
+	default :
+		fprintf (stderr, "%s: invalid family \"%d\"\n",
+			 __func__, cmd);
+		return -1;
+	}
+
+	GENL_REQUEST (req, 128, genl_family, 0, IPLB_GENL_VERSION,
+		      cmd, NLM_F_REQUEST | NLM_F_ACK);
+
+	if ((ret = rtnl_send (&genl_rth, &req.n, req.n.nlmsg_len)) < 0) {
+		fprintf (stderr, "%s: rtnl_senf failed \"%d\"\n",
+			 __func__, ret);
+		return ret;
+	}
+
+	if (rtnl_dump_filter (&genl_rth, tunnel_nlmsg, NULL) < 0) {
+		fprintf (stderr, "Dump terminated\n");
+		exit (1);
+	}
+
+	return 0;
+}
+
+static int
 do_show (int argc, char ** argv)
 {
 	int cmd, ret;
-	struct iplb_param p;
 
-	parse_args (argc, argv, &p);
-
-	if (p.family == 0) {
-		p.family = AF_INET;
+	if (*argv && strcmp (*argv, "tunnel") == 0) {
+		return do_show_tunnel ();
 	}
 
-	switch (p.family) {
+	switch (preferred_family) {
+	case AF_UNSPEC :
 	case AF_INET :
 		cmd = IPLB_CMD_PREFIX4_GET;
 		break;
@@ -666,7 +782,7 @@ do_show (int argc, char ** argv)
 }
 
 int
-do_ipiplb (int argc, char ** argv)
+do_iplb (int argc, char ** argv)
 {
 	if (genl_family < 0) {
 		if (rtnl_open_byproto (&genl_rth, 0, NETLINK_GENERIC) < 0) {

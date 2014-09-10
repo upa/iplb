@@ -644,14 +644,6 @@ static void (* ipv4_set_encap_func[]) (struct sk_buff * skb,
 	ipv4_set_lsrr_encap
 };
 
-
-/*
-void (*ipv6_set_encap_func)[] (struct sk_buff * skb,
-			       struct detour_addr * detour,
-			       struct iplb_net * iplb_net);
-*/
-
-
 static inline u32
 ipv4_flow_hash (struct sk_buff * skb)
 {
@@ -718,6 +710,16 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 
 	return NF_ACCEPT;
 }
+
+
+
+
+
+/*
+void (*ipv6_set_encap_func)[] (struct sk_buff * skb,
+			       struct detour_addr * detour,
+			       struct iplb_net * iplb_net);
+*/
 
 
 static inline u32
@@ -845,7 +847,14 @@ iplb_init_net (struct net * net)
 	
 	memset (iplb_net, 0, sizeof (struct iplb_net));
 
-	iplb_net->tunnel_src = 0x0100000A;	/* 10.0.0.1 */
+	/* tunnel_src = 10.0.0.1 */
+	iplb_net->tunnel_src = 0x0100000A;
+
+	/* tunnel_src6 = 2001:db8::1 */
+	iplb_net->tunnel_src6.in6_u.u6_addr32[0] = 0xb80d0120;
+	iplb_net->tunnel_src6.in6_u.u6_addr32[1] = 0x00000000;
+	iplb_net->tunnel_src6.in6_u.u6_addr32[2] = 0x00000000;
+	iplb_net->tunnel_src6.in6_u.u6_addr32[3] = 0x01000000;
 
 	iplb_net->lookup_fn = lookup_detour_addr_from_tuple_weightbase;
 	INIT_IPLB_RTABLE (&iplb_net->rtable4, 32);
@@ -897,6 +906,10 @@ static struct nla_policy iplb_nl_policy[IPLB_ATTR_MAX + 1] = {
 	[IPLB_ATTR_RELAY6]		= { .type = NLA_BINARY,
 					    .len = sizeof (struct in6_addr), },
 	[IPLB_ATTR_WEIGHT]      	= { .type = NLA_U8, },
+	[IPLB_ATTR_ENCAP_TYPE]		= { .type = NLA_U8, },
+	[IPLB_ATTR_SRC4]		= { .type = NLA_U32, },
+	[IPLB_ATTR_SRC6]		= { .type = NLA_BINARY,
+					    .len = sizeof (struct in6_addr), },
 };
 
 static int
@@ -1566,6 +1579,113 @@ iplb_nl_cmd_weight_set (struct sk_buff * skb, struct genl_info * info)
 }
 
 static int
+iplb_nl_cmd_src4_set (struct sk_buff * skb, struct genl_info * info)
+{
+	__be32 src;
+	struct net	* net = sock_net (skb->sk);
+	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
+
+	if (!info->attrs[IPLB_ATTR_SRC4]) {
+		pr_debug ("%s: address is not specified\n",  __func__);
+		return -EINVAL;
+	}
+
+	src = nla_get_be32 (info->attrs[IPLB_ATTR_SRC4]);
+
+	iplb_net->tunnel_src = src;
+
+	pr_debug ("%s: set tunnel src %pI4\n",
+		  __func__, &iplb_net->tunnel_src);
+
+	return 0;
+}
+
+static int
+iplb_nl_cmd_src6_set (struct sk_buff * skb, struct genl_info * info)
+{
+	struct in6_addr src6;
+	struct net	* net = sock_net (skb->sk);
+	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
+
+	if (!info->attrs[IPLB_ATTR_SRC6]) {
+		pr_debug ("%s: address is not specified\n", __func__);
+		return -EINVAL;
+	}
+
+	nla_memcpy (&src6, info->attrs[IPLB_ATTR_SRC6], sizeof (src6));
+
+	iplb_net->tunnel_src6 = src6;
+
+	pr_debug ("%s: set tunnel src %pI6\n",
+		  __func__, &iplb_net->tunnel_src6);
+
+	return 0;
+}
+
+static int
+iplb_nl_cmd_src4_get (struct sk_buff * skb, struct genl_info * info)
+{
+	void * hdr;
+	struct sk_buff	* msg;
+	struct net	* net = sock_net (skb->sk);
+	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
+
+	msg = nlmsg_new (NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+	if (!msg) {
+		return -ENOMEM;
+	}
+
+	hdr = genlmsg_put (msg, info->snd_portid, info->snd_seq,
+			   &iplb_nl_family, NLM_F_ACK, IPLB_CMD_SRC4_GET);
+	if (!hdr)
+		return -EMSGSIZE;
+
+	if (nla_put_u32 (skb, IPLB_ATTR_SRC4, iplb_net->tunnel_src)) {
+		genlmsg_cancel (msg, hdr);
+		return -EINVAL;
+	}
+
+	if (genlmsg_end (msg, hdr) < 0) {
+		nlmsg_free (msg);
+		return -EINVAL;
+	}
+
+	return genlmsg_unicast (net, msg, info->snd_portid);
+}
+
+static int
+iplb_nl_cmd_src6_get (struct sk_buff * skb, struct genl_info * info)
+{
+	void * hdr;
+	struct sk_buff	* msg;
+	struct net	* net = sock_net (skb->sk);
+	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
+
+	msg = nlmsg_new (NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+	if (!msg) {
+		return -ENOMEM;
+	}
+
+	hdr = genlmsg_put (msg, info->snd_portid, info->snd_seq,
+			   &iplb_nl_family, NLM_F_ACK, IPLB_CMD_SRC4_GET);
+	if (!hdr)
+		return -EMSGSIZE;
+
+	if (nla_put (skb, IPLB_ATTR_SRC6, sizeof (struct in6_addr),
+		     &iplb_net->tunnel_src6)) {
+		genlmsg_cancel (msg, hdr);
+		return -EINVAL;
+	}
+
+	if (genlmsg_end (msg, hdr) < 0) {
+		nlmsg_free (msg);
+		return -EINVAL;
+	}
+
+	return genlmsg_unicast (net, msg, info->snd_portid);
+}
+
+static int
 iplb_nl_cmd_lookup_weightbase (struct sk_buff * skb, struct genl_info * info)
 {
 	struct net	* net = sock_net (skb->sk);
@@ -1659,6 +1779,28 @@ static struct genl_ops iplb_nl_ops[] = {
 		.flags	= GENL_ADMIN_PERM,
 	},
 	{
+		.cmd	= IPLB_CMD_SRC4_SET,
+		.doit	= iplb_nl_cmd_src4_set,
+		.policy	= iplb_nl_policy,
+		.flags	= GENL_ADMIN_PERM,
+	},
+	{
+		.cmd	= IPLB_CMD_SRC6_SET,
+		.doit	= iplb_nl_cmd_src6_set,
+		.policy	= iplb_nl_policy,
+		.flags	= GENL_ADMIN_PERM,
+	},
+	{
+		.cmd	= IPLB_CMD_SRC4_GET,
+		.doit	= iplb_nl_cmd_src4_get,
+		.policy	= iplb_nl_policy,
+	},
+	{
+		.cmd	= IPLB_CMD_SRC6_GET,
+		.doit	= iplb_nl_cmd_src6_get,
+		.policy	= iplb_nl_policy,
+	},
+	{
 		.cmd	= IPLB_CMD_LOOKUP_WEIGHTBASE,
 		.doit	= iplb_nl_cmd_lookup_weightbase,
 		.policy	= iplb_nl_policy,
@@ -1676,32 +1818,6 @@ static struct genl_ops iplb_nl_ops[] = {
 /********************************
  ****   init/exit module 
  ********************************/
-
-#ifdef TEST
-static void
-test_load (void)
-{
-	struct net * net;
-	struct iplb_net * iplb_net;
-	struct detour_tuple * tuple;
-
-	__be32 dst = 0x08080808;	/* 8.8.8.8 */
-	__be32 relay = 0x568fb2cb;	/* 203.178.143.86 */
-
-	net = get_net_ns_by_pid (1);
-	iplb_net = (struct iplb_net *) net_generic (net, iplb_net_id);
-
-	tuple = add_detour_tuple (&iplb_net->rtable4,
-				  AF_INET, &dst, 24);
-	add_detour_addr_to_tuple (tuple, AF_INET, &relay, 10);
-
-	tuple = add_detour_tuple (&iplb_net->rtable4,
-				  AF_INET, &relay, 32);
-	add_detour_addr_to_tuple (tuple, AF_INET, &dst, 100);
-
-	return;
-}
-#endif
 
 static int
 __init iplb_init_module (void)
@@ -1723,10 +1839,6 @@ __init iplb_init_module (void)
 		goto nf_err;
 
 	printk (KERN_INFO "iplb (%s) is loaded\n", IPLB_VERSION);
-
-#ifdef TEST
-	test_load ();
-#endif
 
 	return 0;
 

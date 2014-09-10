@@ -76,7 +76,7 @@ static const struct cmd {
 	{ "ntbl",	do_ipntable },
 	{ "link",	do_iplink },
 	{ "l2tp",	do_ipl2tp },
-	{ "iplb",       do_ipiplb },
+	{ "lb",       	do_iplb },
 	{ "tunnel",	do_iptunnel },
 	{ "tunl",	do_iptunnel },
 	{ "tuntap",	do_iptuntap },
