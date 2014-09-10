@@ -18,10 +18,11 @@
  * ROUTE6_ADD		- v6pref, len : add deatination prefix
  * ROUTE4_DELETE	- v4pref, len : delete deatination prefix
  * ROUTE6_DELETE	- v6pref, len : delete deatination prefix
- * RELAY4_ADD		- v4pref, len, rec4 , weight: add relay point to prefix
- * RELAY6_ADD		- v6pref, len, rec6 , weight: add relay point to prefix
- * RELAY4_DELETE	- v4pref, len, rec4 : delete relay point
- * RELAY6_DELETE	- v4pref, len, rec6 : delete relay point
+ * RELAY4_ADD		- v4pref, len, rec4, (weight), (encap)
+ * RELAY6_ADD		- v6pref, len, rec6, (weight), (encap)
+ * RELAY4_DELETE	- v4pref, len, rec4
+ * RELAY6_DELETE	- v4pref, len, rec6
+ * RELAY_ENCAP_TYPE_SET	- pref, len, rec, encap
  *
  * ROUTE4_GET		- none : get routeing entry, pre, len, rec, weight
  * ROUTE6_GET		- none : get routeing entry, pre, len, rec, weight
@@ -42,6 +43,7 @@ enum {
 	IPLB_CMD_RELAY6_ADD,
 	IPLB_CMD_RELAY4_DELETE,
 	IPLB_CMD_RELAY6_DELETE,
+	IPLB_CMD_ENCAP_TYPE_SET,
 	
 	IPLB_CMD_PREFIX4_GET,
 	IPLB_CMD_PREFIX6_GET,
@@ -57,6 +59,16 @@ enum {
 #define IPLB_CMD_MAX	(__IPLB_CMD_MAX - 1)
 
 
+enum {
+	IPLB_ENCAP_TYPE_GRE,
+	IPLB_ENCAP_TYPE_IPIP,
+	IPLB_ENCAP_TYPE_LSRR,
+
+	__IPLB_ENCAP_TYPE_MAX,
+};
+#define IPLB_ENCAP_TYPE_MAX	(__IPLB_ENCAP_TYPE_MAX - 1)
+
+
 /* ATTR types */
 enum {
 	IPLB_ATTR_NONE,			/* none		*/
@@ -66,6 +78,8 @@ enum {
 	IPLB_ATTR_RELAY4,		/* 32 bit 	*/
 	IPLB_ATTR_RELAY6,		/* 128 bit	*/
 	IPLB_ATTR_WEIGHT,		/* 8 bit 	*/
+	IPLB_ATTR_ENCAP_TYPE,		/* 8bit		*/
+
 	__IPLB_ATTR_MAX,
 };
 

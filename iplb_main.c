@@ -1,6 +1,6 @@
 
 /*
- * IPIP based Load Balancing
+ * IP-in-IP based Load Balancing
  */
 
 /*
@@ -56,6 +56,7 @@ MODULE_AUTHOR ("upa@haeena.net");
 #define IPV4_IPIP_HEADROOM	(20 + 16)
 #define IPV6_IPIP_HEADROOM	(40 + 16)
 #endif
+
 
 
 #define ADDR4COPY(s, d) *(((u32 *)(d))) = *(((u32 *)(s)))
@@ -116,6 +117,7 @@ struct detour_addr {
 
 	u8			family;
 	u8			weight;
+	u8			encap_type;
 
 	union {
 		__be32		__detour_addr4[1];
@@ -347,7 +349,7 @@ delete_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 
 static void
 add_detour_addr_to_tuple (struct detour_tuple * tuple, 
-			  u8 af, void * addr, u8 weight)
+			  u8 af, void * addr, u8 weight, u8 encap_type)
 {
 	struct detour_addr * detour;
 
@@ -359,6 +361,7 @@ add_detour_addr_to_tuple (struct detour_tuple * tuple,
 	detour->tuple	= tuple;
 	detour->family	= af;
 	detour->weight	= weight;
+	detour->encap_type = encap_type;
 
 	switch (af) {
 	case (AF_INET) :
@@ -476,18 +479,47 @@ patricia_destroy_detour_tuple (void * data)
  ********************************/
 
 static inline void
-ipv4_set_ipip_encap (struct sk_buff * skb, struct detour_addr * detour,
-		     struct iplb_net * iplb_net)
+move_header (void * srcp, void * dstp, size_t len)
+{
+	int n;
+	__u32 * src = srcp;
+	__u32 * dst = dstp;
+	size_t rest = len % 4;
+	len = (len - rest) / 4;
+
+	/* move header from src to dst */
+
+	for (n = 0; n < len; n++) {
+		*(dst + n) = *(src + n);
+	}
+
+	if (rest) {
+		char * s, * d;
+		s = (char *) (src + n);
+		d = (char *) (dst + n);
+		for (n = 0; n < rest % 4; n++) {
+			*(d + n) = *(s + n);
+		}
+	}
+	return;
+}
+#define move_front_ipv4_header(sip, dip) \
+	move_header ((sip), (dip), (sip)->ihl * 4)
+
+#define move_front_ipv6_header(sip, dip) \
+	move_header ((sip), (dip), sizeof (struct ipv6hdr));
+
+
+static inline void
+ipv4_set_gre_encap (struct sk_buff * skb, struct detour_addr * detour,
+		    struct iplb_net * iplb_net)
 {
 	struct iphdr	* iph, * ipiph;
-
-#ifdef WITH_GRE
 	struct grehdr {
 		__be16	flags;
 		__be16	protocol;
 	};
 	struct grehdr * greh;
-#endif
 
 	iph = (struct iphdr *) skb_network_header (skb);
 
@@ -497,12 +529,8 @@ ipv4_set_ipip_encap (struct sk_buff * skb, struct detour_addr * detour,
 		return;
 	}
 
-#ifdef WITH_GRE
 	ipiph = (struct iphdr *) __skb_push (skb, sizeof (struct iphdr) + 
 					     sizeof (struct grehdr));
-#else
-	ipiph = (struct iphdr *) __skb_push (skb, sizeof (struct iphdr));
-#endif
 	skb_reset_network_header (skb);
 
 	ipiph->version	= IPVERSION;
@@ -511,29 +539,118 @@ ipv4_set_ipip_encap (struct sk_buff * skb, struct detour_addr * detour,
 	ipiph->frag_off	= 0;
 	ipiph->ttl	= 16;
 
-#ifdef WITH_GRE
+
 	ipiph->tot_len	= htons (ntohs (iph->tot_len) + sizeof (struct grehdr)
 		+ sizeof (struct iphdr));
 	ipiph->protocol = IPPROTO_GRE;
-#else
-	ipiph->tot_len	= htons (ntohs (iph->tot_len) + sizeof (struct iphdr));
-	ipiph->protocol = IPPROTO_IPIP;
-#endif
-
 	ipiph->check	= 0;
 	ipiph->saddr	= iplb_net->tunnel_src;
 	ipiph->daddr	= *detour->detour_ip4;
 	ipiph->check	= wrapsum (checksum (ipiph, sizeof (struct iphdr), 0));
 
-
-#ifdef WITH_GRE
 	greh = (struct grehdr *) (ipiph + 1);
 	greh->flags	= 0;
 	greh->protocol	= htons (ETH_P_IP);
-#endif
 
 	return;
 }
+
+static inline void
+ipv4_set_ipip_encap (struct sk_buff * skb, struct detour_addr * detour,
+		     struct iplb_net * iplb_net)
+{
+	struct iphdr	* iph, * ipiph;
+
+	iph = (struct iphdr *) skb_network_header (skb);
+
+	if (skb_cow_head (skb, IPV4_IPIP_HEADROOM)) {
+		printk (KERN_INFO "%s:%d: skb_cow_head failed\n",
+			__func__, __LINE__);
+		return;
+	}
+
+	ipiph = (struct iphdr *) __skb_push (skb, sizeof (struct iphdr));
+	skb_reset_network_header (skb);
+
+	ipiph->version	= IPVERSION;
+	ipiph->ihl	= sizeof (struct iphdr) >> 2;
+	ipiph->tos	= 0;
+	ipiph->frag_off	= 0;
+	ipiph->ttl	= 16;
+	ipiph->tot_len	= htons (ntohs (iph->tot_len) + sizeof (struct iphdr));
+	ipiph->protocol = IPPROTO_IPIP;
+	ipiph->check	= 0;
+	ipiph->saddr	= iplb_net->tunnel_src;
+	ipiph->daddr	= *detour->detour_ip4;
+	ipiph->check	= wrapsum (checksum (ipiph, sizeof (struct iphdr), 0));
+
+	return;
+}
+
+static inline void
+ipv4_set_lsrr_encap (struct sk_buff * skb, struct detour_addr * detour,
+		     struct iplb_net * iplb_net)
+{
+	__be32 old_dst;
+	struct iphdr * new_iph, * old_iph;
+
+	struct optlsrr {
+		u8 nop;
+		u8 type;
+		u8 length;
+		u8 pointer;
+		u32 detour_addr[1];
+	} __attribute__ ((__packed__));
+
+	struct optlsrr * lsrr;
+
+	old_iph = (struct iphdr *) skb_network_header (skb);
+	old_dst = old_iph->daddr;
+
+	if (skb_cow_head (skb, sizeof (struct optlsrr) + 16)) {
+		printk (KERN_INFO "%s:%d: skb_cow_head failed\n",
+			__func__, __LINE__);
+		return;
+	}
+
+	new_iph = (struct iphdr *) __skb_push (skb, sizeof (struct optlsrr));
+	move_front_ipv4_header (old_iph, new_iph);
+
+	skb_reset_network_header (skb);
+	lsrr = (struct optlsrr *) (skb->data + new_iph->ihl * 4) ;
+
+	lsrr->nop	= IPOPT_NOOP;
+	lsrr->type	= IPOPT_LSRR;
+	lsrr->length	= sizeof (struct optlsrr) - 1; /* - nop */
+	lsrr->pointer   = 4;	/* XXX: number of records is always 1 */
+	lsrr->detour_addr[0] = old_dst;
+	// lsrr->detour_addr[1] = old_dst;
+
+	new_iph->daddr	= *detour->detour_ip4;
+	new_iph->ihl	+= sizeof (struct optlsrr) / 4;
+	new_iph->tot_len	+= htons (sizeof (struct optlsrr));
+	new_iph->check	= 0;
+	new_iph->check	= wrapsum (checksum (new_iph, sizeof (struct iphdr) +
+					     sizeof (struct optlsrr), 0));
+
+	return;
+}
+
+static void (* ipv4_set_encap_func[]) (struct sk_buff * skb,
+				       struct detour_addr * detour,
+				       struct iplb_net * iplb_net) = {
+	ipv4_set_ipip_encap,
+	ipv4_set_gre_encap,
+	ipv4_set_lsrr_encap
+};
+
+
+/*
+void (*ipv6_set_encap_func)[] (struct sk_buff * skb,
+			       struct detour_addr * detour,
+			       struct iplb_net * iplb_net);
+*/
+
 
 static inline u32
 ipv4_flow_hash (struct sk_buff * skb)
@@ -591,7 +708,13 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 	if (!detour)
 		return NF_ACCEPT;
 	
-	ipv4_set_ipip_encap (skb, detour, iplb_net);
+	if (unlikely (detour->encap_type > IPLB_ENCAP_TYPE_MAX)) {
+		printk (KERN_ERR "%s: invalid encap type %u\n",
+			__func__, detour->encap_type);
+		return NF_ACCEPT;
+	}
+
+	ipv4_set_encap_func[detour->encap_type] (skb, detour, iplb_net);
 
 	return NF_ACCEPT;
 }
@@ -938,7 +1061,7 @@ iplb_nl_cmd_prefix6_delete (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_relay4_add (struct sk_buff * skb, struct genl_info * info)
 {
-	u8		length, weight;
+	u8		length, weight, encap_type;
 	__be32		prefix, relay;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
@@ -964,21 +1087,28 @@ iplb_nl_cmd_relay4_add (struct sk_buff * skb, struct genl_info * info)
 
 	if (!info->attrs[IPLB_ATTR_WEIGHT]) {
 		weight = 100;
+	} else {
+		weight = nla_get_u8 (info->attrs[IPLB_ATTR_WEIGHT]);
 	}
-	weight = nla_get_u8 (info->attrs[IPLB_ATTR_WEIGHT]);
 
 	if (weight > 255) {
 		pr_debug ("%s: weight must be smaller than 256", __func__);
 		return -EINVAL;
 	}
 
+	if (!info->attrs[IPLB_ATTR_ENCAP_TYPE]) {
+		encap_type = IPLB_ENCAP_TYPE_GRE;
+	} else {
+		encap_type = nla_get_u8 (info->attrs[IPLB_ATTR_ENCAP_TYPE]);
+	}
 
 	tuple = find_detour_tuple_exact (&iplb_net->rtable4,
 					 AF_INET, &prefix, length);
 	if (!tuple)
-		return -ENOENT;
+		tuple = add_detour_tuple (&iplb_net->rtable4,
+					  AF_INET, &prefix, length);
 
-	add_detour_addr_to_tuple (tuple, AF_INET, &relay, weight);
+	add_detour_addr_to_tuple (tuple, AF_INET, &relay, weight, encap_type);
 
 	return 0;
 }
@@ -986,7 +1116,7 @@ iplb_nl_cmd_relay4_add (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_relay6_add (struct sk_buff * skb, struct genl_info * info)
 {
-	u8		length, weight;
+	u8		length, weight, encap_type;
 	struct in6_addr	prefix, relay;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
@@ -1020,13 +1150,19 @@ iplb_nl_cmd_relay6_add (struct sk_buff * skb, struct genl_info * info)
 		return -EINVAL;
 	}
 
+	if (!info->attrs[IPLB_ATTR_ENCAP_TYPE]) {
+		encap_type = IPLB_ENCAP_TYPE_GRE;
+	} else {
+		encap_type = nla_get_u8 (info->attrs[IPLB_ATTR_ENCAP_TYPE]);
+	}
 
 	tuple = find_detour_tuple_exact (&iplb_net->rtable6,
 					 AF_INET6, &prefix, length);
 	if (!tuple)
-		return -ENOENT;
+		tuple = add_detour_tuple (&iplb_net->rtable6,
+					  AF_INET6, &prefix, length);
 
-	add_detour_addr_to_tuple (tuple, AF_INET6, &relay, weight);
+	add_detour_addr_to_tuple (tuple, AF_INET6, &relay, weight, encap_type);
 
 	return 0;
 }
