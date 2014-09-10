@@ -47,7 +47,7 @@ MODULE_LICENSE ("GPL");
 MODULE_AUTHOR ("upa@haeena.net");
 
 
-#define IPV4_GER_HEADROOM	(8 + 20 + 16)
+#define IPV4_GRE_HEADROOM	(8 + 20 + 16)
 #define IPV6_GRE_HEADROOM	(8 + 40 + 16)
 #define IPV4_IPIP_HEADROOM	(20 + 16)
 #define IPV6_IPIP_HEADROOM	(40 + 16)
@@ -633,8 +633,8 @@ ipv4_set_lsrr_encap (struct sk_buff * skb, struct detour_addr * detour,
 static void (* ipv4_set_encap_func[]) (struct sk_buff * skb,
 				       struct detour_addr * detour,
 				       struct iplb_net * iplb_net) = {
-	ipv4_set_ipip_encap,
 	ipv4_set_gre_encap,
+	ipv4_set_ipip_encap,
 	ipv4_set_lsrr_encap
 };
 
