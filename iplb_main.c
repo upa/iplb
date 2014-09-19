@@ -19,6 +19,7 @@
 #include <linux/list.h>
 #include <linux/rculist.h>
 #include <linux/hash.h>
+#include <linux/hashtable.h>
 #include <linux/skbuff.h>
 #include <linux/netfilter.h>
 #include <linux/rwlock.h>
@@ -51,6 +52,8 @@ MODULE_AUTHOR ("upa@haeena.net");
 #define IPV6_GRE_HEADROOM	(8 + 40 + 14)
 #define IPV4_IPIP_HEADROOM	(20 + 14)
 #define IPV6_IPIP_HEADROOM	(40 + 14)
+
+#define FLOW_HASH_BITS	8
 
 
 #define ADDR4COPY(s, d) *(((u32 *)(d))) = *(((u32 *)(s)))
@@ -132,7 +135,35 @@ struct detour_tuple {
 	struct list_head	detour_list;	/* list of detour_addr */
 };
 
-/* per network namespace structure */
+
+/* Flow classifier for flow scheduling */
+
+struct iplb_flow4 {
+	struct hlist_node	hash;	/* private for linux/hashtable */
+	struct rcu_head		rcu;	/* private */
+	unsigned long		key;	/* private */
+
+	u8	protocol;	/* tcp or udp */
+	__be32	saddr, daddr;
+	u16	sport, dport;	/* src/dst port number. (network byte order) */
+
+	u32	pkt_count;
+	u32	byte_count;
+
+	u32	detour_number;	/* the place of relay on detour_list */
+	/*
+	 * if detour_number is larger than detour_count of tuple,
+	 * detour_number is changed to 1. 0 means "unspecified".
+	 */
+};
+
+
+/* XXX: hashtable for flow should be declared in netns structure. */
+static DEFINE_HASHTABLE (flow4_table, FLOW_HASH_BITS);
+
+
+
+/* Per network namespace structure */
 struct iplb_net {
 
 	/* tunnel source address (not used for routing) */
@@ -140,7 +171,8 @@ struct iplb_net {
 	struct in6_addr		tunnel_src6;	/* default 2001:db8::1	*/
 
 	/* lookup function for detour_addr from tuple. */
-	struct detour_addr * (* lookup_fn) (struct detour_tuple * , u32);
+	struct detour_addr * (* lookup_fn) (struct sk_buff *,
+					    struct detour_tuple * );
 
 	/* routing tables for IPv4 and IPv6 */
 	struct iplb_rtable	rtable4;
@@ -391,8 +423,8 @@ delete_detour_addr_from_tuple (struct detour_tuple * tuple, u8 af, void * addr)
 		detour = list_entry (p, struct detour_addr, list);
 		if (ADDRCMP (af, &detour->detour_ip, addr)) {
 			tuple->weight_sum -= detour->weight;
-			list_del_rcu (p);
 			tuple->detour_count--;
+			list_del_rcu (p);
 			kfree_rcu (detour, rcu);
 			return;
 		}
@@ -411,49 +443,6 @@ update_iplb_stats (struct detour_addr * detour, struct sk_buff * skb)
 }
 
 static struct detour_addr *
-lookup_detour_addr_from_tuple_weightbase (struct detour_tuple *tuple, u32 hash)
-{
-	u32 w;
-	struct detour_addr * detour;
-	
-	detour = NULL;
-	w = hash % tuple->weight_sum;
-
-	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
-		if (detour->weight >= w) {
-			break;
-		}
-		w -= detour->weight;
-	}
-
-	return detour;
-}
-
-static struct detour_addr *
-lookup_detour_addr_from_tuple_hashbase (struct detour_tuple * tuple, u32 hash)
-{
-	u32 h;
-	struct detour_addr * detour;
-
-	/* hashbase means all locator weights are 100. */
-
-	if (tuple->detour_count == 0)
-		return NULL;
-
-	detour = NULL;
-	h = hash % (tuple->detour_count * 100);
-
-	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
-		if (100 >= h)
-			break;
-		h -= 100;
-	}
-
-	return detour;
-}
-
-
-static struct detour_addr *
 find_detour_addr_from_tuple (struct detour_tuple * tuple, u8 af, void * addr)
 {
 	struct detour_addr * detour;
@@ -461,7 +450,7 @@ find_detour_addr_from_tuple (struct detour_tuple * tuple, u8 af, void * addr)
 	detour = NULL;
 
 	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
-		if (ADDRCMP (af, &detour->detour_ip, addr)) 
+		if (ADDRCMP (af, &detour->detour_ip, addr))
 			return detour;
 	}
 
@@ -475,6 +464,60 @@ patricia_destroy_detour_tuple (void * data)
 	destroy_detour_tuple ((struct detour_tuple *) data);
 
 	return;
+}
+
+
+/********************************
+ ****   flow classifier related
+ ********************************/
+
+#define FLOW4_HASH_KEY(proto, saddr, daddr, sport, dport) \
+	hash_32 (proto + saddr + daddr + sport + dport, FLOW_HASH_BITS)
+
+static struct iplb_flow4 *
+find_flow4 (u8 proto, __be32 saddr, __be32 daddr,
+	    u16 sport, u16 dport)
+{
+	unsigned long key;
+	struct iplb_flow4 * flow4 = NULL;
+
+	key = FLOW4_HASH_KEY (proto, saddr, daddr, sport, dport);
+
+	hash_for_each_possible_rcu (flow4_table, flow4, hash, key) {
+		if (flow4->protocol == proto &&
+		    flow4->dport == dport && flow4->sport == sport &&
+		    flow4->daddr == daddr && flow4->saddr == saddr) {
+			return flow4;
+		}
+	}
+
+	return NULL;
+}
+
+static struct iplb_flow4 *
+create_flow4 (u8 proto, __be32 saddr, __be32 daddr, u16 sport, u16 dport,
+	      int f)
+{
+	struct iplb_flow4 * flow4;
+
+	flow4 = (struct iplb_flow4 *) kmalloc (sizeof (struct iplb_flow4), f);
+	if (!flow4) {
+		printk (KERN_ERR "iplb:%s: failed to allocate memory\n",
+			__func__);
+		return NULL;
+	}
+
+	flow4->protocol	= proto;
+	flow4->saddr	= saddr;
+	flow4->daddr	= daddr;
+	flow4->sport	= sport;
+	flow4->dport	= dport;
+	flow4->key	= FLOW4_HASH_KEY (proto, saddr, dport, sport, dport);
+	flow4->pkt_count  = 0;
+	flow4->byte_count = 0;
+	flow4->detour_number = 0;
+
+	return flow4;
 }
 
 
@@ -596,7 +639,7 @@ static inline void
 ipv4_set_lsrr_encap (struct sk_buff * skb, struct detour_addr * detour,
 		     struct iplb_net * iplb_net)
 {
-	__be32 old_dst;
+	__be32	old_dst;
 	struct iphdr * new_iph, * old_iph;
 
 	struct optlsrr {
@@ -672,13 +715,138 @@ ipv4_flow_hash (struct sk_buff * skb)
 		val1 <<= 16;
 		val1 += udp->dest;
 		break;
-	default :
+	case IPPROTO_ICMP :
 		val1 = 1;
+		break;
+	default :
+		/* unspported protocol is forwarded natively. */
+		return 0;
 	}
 
 	val2 = ip->daddr + ip->saddr;
 
 	return hash_32 (val1 + val2, 16);
+}
+
+static inline u32
+ipv4_flow_classify (struct sk_buff * skb, struct detour_tuple * tuple)
+{
+	u16	sport, dport;
+	struct iplb_flow4 * flow4;
+	struct iphdr 	* ip;
+	struct tcphdr	* tcp;
+	struct udphdr	* udp;
+
+	ip = (struct iphdr *) skb_network_header (skb);
+	switch (ip->protocol) {
+	case IPPROTO_TCP :
+		tcp = (struct tcphdr *) IPTRANSPORTHDR (ip);
+		sport = tcp->source;
+		dport = tcp->dest;
+		break;
+	case IPPROTO_UDP :
+		udp = (struct udphdr *) IPTRANSPORTHDR (ip);
+		sport = udp->source;
+		dport = udp->dest;
+		break;
+	case IPPROTO_ICMP :
+		sport = dport = 0;
+		break;
+	default :
+		/* unspported protocol is forwarded natively. */
+		return 0;
+	}
+
+	flow4 = find_flow4 (ip->protocol, ip->saddr, ip->daddr,
+			    sport, dport);
+	if (flow4 == NULL) {
+		flow4 = create_flow4 (ip->protocol,ip->saddr, ip->daddr,
+				      sport, dport, GFP_ATOMIC);
+		if (flow4 == NULL)
+			return 0;
+		hash_add (flow4_table, &flow4->hash, flow4->key);
+	}
+
+	if (unlikely (flow4->detour_number > tuple->detour_count)) {
+		flow4->detour_number = 0;
+	}
+
+	flow4->pkt_count += 1;
+	flow4->byte_count += skb->len;
+
+	return flow4->detour_number;
+}
+
+
+static struct detour_addr *
+lookup_detour_addr_from_tuple_weightbase (struct sk_buff * skb,
+					  struct detour_tuple *tuple)
+{
+	u32 hash, w;
+	struct detour_addr * detour;
+
+	hash = ipv4_flow_hash (skb);
+	if (unlikely (!hash))
+		return NULL;
+
+	detour = NULL;
+	w = hash % tuple->weight_sum;
+
+	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
+		if (detour->weight >= w) {
+			break;
+		}
+		w -= detour->weight;
+	}
+
+	return detour;
+}
+
+static struct detour_addr *
+lookup_detour_addr_from_tuple_hashbase (struct sk_buff * skb,
+					struct detour_tuple * tuple)
+{
+	u32 hash, h;
+	struct detour_addr * detour;
+
+	/* hashbase means all locator weights are 100. */
+
+	hash = ipv4_flow_hash (skb);
+	if (unlikely (!hash))
+		return NULL;
+
+	if (tuple->detour_count == 0)
+		return NULL;
+
+	detour = NULL;
+	h = hash % (tuple->detour_count * 100);
+
+	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
+		if (100 >= h)
+			break;
+		h -= 100;
+	}
+
+	return detour;
+}
+
+static struct detour_addr *
+lookup_detour_addr_from_tuple_flowbase (struct sk_buff * skb,
+					struct detour_tuple * tuple)
+{
+	u32 hash;
+	struct detour_addr * detour = NULL;
+
+	hash = ipv4_flow_classify (skb, tuple);
+	if (!hash)
+		return NULL;
+
+	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
+		if (--hash == 0)
+			break;
+	}
+
+	return detour;
 }
 
 static unsigned int
@@ -701,7 +869,7 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 	if (!tuple)
 		return NF_ACCEPT;
 
-	detour = iplb_net->lookup_fn (tuple, ipv4_flow_hash (skb));
+	detour = iplb_net->lookup_fn (skb, tuple);
 	if (!detour)
 		return NF_ACCEPT;
 	
@@ -818,7 +986,7 @@ nf_iplb_v6_localout (const struct nf_hook_ops * ops,
 	if (!tuple)
 		return NF_ACCEPT;
 
-	detour = iplb_net->lookup_fn (tuple, ipv6_flow_hash (skb));
+	detour = iplb_net->lookup_fn (skb, tuple);
 	if (!detour)
 		return NF_ACCEPT;
 
@@ -1722,6 +1890,19 @@ iplb_nl_cmd_lookup_hashbase (struct sk_buff * skb, struct genl_info * info)
 	return 0;
 }
 
+static int
+iplb_nl_cmd_lookup_flowbase (struct sk_buff * skb, struct genl_info * info)
+{
+	struct net	* net = sock_net (skb->sk);
+	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
+
+	iplb_net->lookup_fn = lookup_detour_addr_from_tuple_flowbase;
+
+	printk (KERN_INFO "iplb: set lookup function \"flowbase\"\n");
+
+	return 0;
+}
+
 static struct genl_ops iplb_nl_ops[] = {
 	{
 		.cmd	= IPLB_CMD_PREFIX4_ADD,
@@ -1820,6 +2001,12 @@ static struct genl_ops iplb_nl_ops[] = {
 	{
 		.cmd	= IPLB_CMD_LOOKUP_HASHBASE,
 		.doit	= iplb_nl_cmd_lookup_hashbase,
+		.policy	= iplb_nl_policy,
+		.flags	= GENL_ADMIN_PERM,
+	},
+	{
+		.cmd	= IPLB_CMD_LOOKUP_FLOWBASE,
+		.doit	= iplb_nl_cmd_lookup_flowbase,
 		.policy	= iplb_nl_policy,
 		.flags	= GENL_ADMIN_PERM,
 	},

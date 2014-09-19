@@ -56,6 +56,7 @@ struct iplb_param {
 
 	int	lookup_weightbase;
 	int	lookup_hashbase;
+	int	lookup_flowbase;
 };
 
 
@@ -160,6 +161,8 @@ parse_args (int argc, char ** argv, struct iplb_param * p)
 			p->lookup_weightbase = 1;
 		} else if (strcmp (*argv, "hashbase") == 0) {
 			p->lookup_hashbase = 1;
+		} else if (strcmp (*argv, "flowbase") == 0) {
+			p->lookup_flowbase = 1;
 		}
 
 		argc--;
@@ -186,7 +189,8 @@ usage (void)
 		 "             [ relay ADDRESS ]\n"
 		 "             [ weight WEIGHT ]\n"
 		 "\n"
-		 "       ip lb set lookup [ { weightbase | hashbase } ]\n"
+		 "       ip lb set lookup\n"
+		 "             [ { weightbase | hashbase | flowbase } ]\n"
 		 "\n"
 		 "       ip lb set tunnel src [ ADDRESS ]\n"
 		 "\n"
@@ -494,6 +498,8 @@ do_set_lookup (int argc, char ** argv)
 		cmd = IPLB_CMD_LOOKUP_WEIGHTBASE;
 	} else if (p.lookup_hashbase) {
 		cmd = IPLB_CMD_LOOKUP_HASHBASE;
+	} else if (p.lookup_flowbase) {
+		cmd = IPLB_CMD_LOOKUP_FLOWBASE;
 	} else {
 		fprintf (stderr, "invalid lookup type\n");
 		return -1;
