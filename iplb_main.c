@@ -47,10 +47,10 @@ MODULE_LICENSE ("GPL");
 MODULE_AUTHOR ("upa@haeena.net");
 
 
-#define IPV4_GRE_HEADROOM	(8 + 20 + 16)
-#define IPV6_GRE_HEADROOM	(8 + 40 + 16)
-#define IPV4_IPIP_HEADROOM	(20 + 16)
-#define IPV6_IPIP_HEADROOM	(40 + 16)
+#define IPV4_GRE_HEADROOM	(8 + 20 + 14)
+#define IPV6_GRE_HEADROOM	(8 + 40 + 14)
+#define IPV4_IPIP_HEADROOM	(20 + 14)
+#define IPV6_IPIP_HEADROOM	(40 + 14)
 
 
 #define ADDR4COPY(s, d) *(((u32 *)(d))) = *(((u32 *)(s)))
@@ -101,13 +101,13 @@ struct iplb_rtable {
 	} while (0)
 
 
-
 /* detour address for one next hop */
 struct detour_addr {
 	struct list_head	list;
 	struct rcu_head		rcu;
 
 	struct detour_tuple 	* tuple;	/* parent */
+	struct iplb_stats	stats;
 
 	u8			family;
 	u8			weight;
@@ -355,7 +355,9 @@ add_detour_addr_to_tuple (struct detour_tuple * tuple,
 	detour->tuple	= tuple;
 	detour->family	= af;
 	detour->weight	= weight;
-	detour->encap_type = encap_type;
+	detour->encap_type	= encap_type;
+	detour->stats.pkt_count	= 0;
+	detour->stats.byte_count = 0;
 
 	switch (af) {
 	case (AF_INET) :
@@ -395,6 +397,15 @@ delete_detour_addr_from_tuple (struct detour_tuple * tuple, u8 af, void * addr)
 			return;
 		}
 	}
+
+	return;
+}
+
+static void
+update_iplb_stats (struct detour_addr * detour, struct sk_buff * skb)
+{
+	detour->stats.pkt_count++;
+	detour->stats.byte_count += skb->len;
 
 	return;
 }
@@ -701,6 +712,7 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 	}
 
 	ipv4_set_encap_func[detour->encap_type] (skb, detour, iplb_net);
+	update_iplb_stats (detour, skb);
 
 	return NF_ACCEPT;
 }
@@ -904,6 +916,9 @@ static struct nla_policy iplb_nl_policy[IPLB_ATTR_MAX + 1] = {
 	[IPLB_ATTR_SRC4]		= { .type = NLA_U32, },
 	[IPLB_ATTR_SRC6]		= { .type = NLA_BINARY,
 					    .len = sizeof (struct in6_addr), },
+	[IPLB_ATTR_STATS]		= { .type = NLA_BINARY,
+					    .len =
+					    sizeof (struct iplb_stats), },
 };
 
 static int
@@ -1299,7 +1314,7 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	if (IS_ERR (hdr))
 		PTR_ERR (hdr);
 
-	/* put prefix, length, relay, weight */
+	/* put prefix, length, relay, weight, stats */
 
 	switch (detour->family) {
 	case (AF_INET) :
@@ -1323,7 +1338,9 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	    nla_put_u8 (skb, IPLB_ATTR_PREFIX_LENGTH,
 			detour->tuple->prefix->bitlen) ||
 	    nla_put_u8 (skb, IPLB_ATTR_WEIGHT, detour->weight) ||
-	    nla_put_u8 (skb, IPLB_ATTR_ENCAP_TYPE, detour->encap_type))
+	    nla_put_u8 (skb, IPLB_ATTR_ENCAP_TYPE, detour->encap_type) ||
+	    nla_put (skb, IPLB_ATTR_STATS, sizeof (struct detour_addr),
+		     &detour->stats))
 		goto error_out;
 
 	return genlmsg_end (skb, hdr);

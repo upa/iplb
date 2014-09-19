@@ -88,11 +88,21 @@ enum {
 	IPLB_ATTR_ENCAP_TYPE,		/* 8 bit	*/
 	IPLB_ATTR_SRC4,			/* 3 2bit	*/
 	IPLB_ATTR_SRC6,			/* 12 bit	*/
+	IPLB_ATTR_STATS,		/* binary	*/
 
 	__IPLB_ATTR_MAX,
 };
 
 #define IPLB_ATTR_MAX	(__IPLB_ATTR_MAX - 1)
+
+
+/* counter structure */
+
+struct iplb_stats {
+	__u32     pkt_count;
+	__u32     byte_count;
+};
+
 
 
 #endif /* _LINUX_IPLB_NETLINK_H_ */
