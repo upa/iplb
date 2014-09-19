@@ -53,8 +53,9 @@ MODULE_AUTHOR ("upa@haeena.net");
 #define IPV4_IPIP_HEADROOM	(20 + 14)
 #define IPV6_IPIP_HEADROOM	(40 + 14)
 
-#define FLOW_HASH_BITS	8
-
+#define FLOW_HASH_BITS		8
+#define FLOW_AGE_LIFETIME	(60 * HZ)
+#define FLOW_AGE_INTERVAL	(10 * HZ)
 
 #define ADDR4COPY(s, d) *(((u32 *)(d))) = *(((u32 *)(s)))
 #define ADDR6COPY(s, d) do {					\
@@ -143,8 +144,10 @@ struct iplb_flow4 {
 	struct rcu_head		rcu;	/* private */
 	unsigned long		key;	/* private */
 
-	u8	protocol;	/* tcp or udp */
-	__be32	saddr, daddr;
+	int	updated;	/* lifetime to live. jiffies. */
+
+	u8	protocol;	/* tcp or udp		*/
+	__be32	saddr, daddr;	/* src/dst address	*/
 	u16	sport, dport;	/* src/dst port number. (network byte order) */
 
 	u32	pkt_count;
@@ -160,7 +163,7 @@ struct iplb_flow4 {
 
 /* XXX: hashtable for flow should be declared in netns structure. */
 static DEFINE_HASHTABLE (flow4_table, FLOW_HASH_BITS);
-
+static struct timer_list iplb_age_timer;
 
 
 /* Per network namespace structure */
@@ -182,7 +185,7 @@ struct iplb_net {
 
 
 /********************************
- ****   Source route table for prefixes
+ ****   routing table operations
  ********************************/
 
 /* from netmap pkt-gen.c */
@@ -516,11 +519,34 @@ create_flow4 (u8 proto, __be32 saddr, __be32 daddr, u16 sport, u16 dport,
 	flow4->pkt_count  = 0;
 	flow4->byte_count = 0;
 	flow4->detour_number = 0;
+	flow4->updated	= jiffies;
 
 	return flow4;
 }
 
+static void
+cleanup_flow (unsigned long arg)
+{
+	int n;
+	struct iplb_flow4 * flow4;
+	struct hlist_node * tmp;
+	unsigned long timeout;
+	unsigned long next_timer = jiffies + FLOW_AGE_INTERVAL;
 
+	hash_for_each_safe (flow4_table, n, tmp, flow4, hash) {
+
+		timeout = flow4->updated + FLOW_AGE_LIFETIME;
+
+		if (time_before_eq (timeout, jiffies)) {
+			hash_del_rcu (&flow4->hash);
+			kfree_rcu (flow4, rcu);
+		}
+	}
+
+	mod_timer (&iplb_age_timer, next_timer);
+
+	return;
+}
 
 /********************************
  ****   nf hook ops
@@ -764,15 +790,16 @@ ipv4_flow_classify (struct sk_buff * skb, struct detour_tuple * tuple)
 				      sport, dport, GFP_ATOMIC);
 		if (flow4 == NULL)
 			return 0;
-		hash_add (flow4_table, &flow4->hash, flow4->key);
+		hash_add_rcu (flow4_table, &flow4->hash, flow4->key);
 	}
 
 	if (unlikely (flow4->detour_number > tuple->detour_count)) {
 		flow4->detour_number = 0;
 	}
 
-	flow4->pkt_count += 1;
+	flow4->pkt_count  += 1;
 	flow4->byte_count += skb->len;
+	flow4->updated    = jiffies;
 
 	return flow4->detour_number;
 }
@@ -1087,6 +1114,9 @@ static struct nla_policy iplb_nl_policy[IPLB_ATTR_MAX + 1] = {
 	[IPLB_ATTR_STATS]		= { .type = NLA_BINARY,
 					    .len =
 					    sizeof (struct iplb_stats), },
+	[IPLB_ATTR_FLOW4]		= { .type = NLA_BINARY,
+					    .len =
+					    sizeof (struct iplb_flow4), },
 };
 
 static int
@@ -1865,6 +1895,62 @@ iplb_nl_cmd_src6_get (struct sk_buff * skb, struct genl_info * info)
 }
 
 static int
+iplb_nl_flow4_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
+		    struct iplb_flow4 * flow4)
+{
+	void * hdr;
+	struct iplb_flow4_info info;
+	
+	if (!skb || ! flow4)
+		return -1;
+
+	hdr = genlmsg_put (skb, pid, seq, &iplb_nl_family,
+			   flags, IPLB_CMD_FLOW4_GET);
+
+	if (IS_ERR (hdr))
+		PTR_ERR (hdr);
+
+	info.protocol = flow4->protocol;
+	info.saddr = flow4->saddr;
+	info.daddr = flow4->daddr;
+	info.sport = flow4->sport;
+	info.dport = flow4->dport;
+	info.pkt_count = flow4->pkt_count;
+	info.byte_count = flow4->byte_count;
+	info.relay_number = flow4->detour_number;
+	
+	if (nla_put (skb, IPLB_ATTR_FLOW4, sizeof (struct iplb_flow4_info),
+		    &info))
+		goto error_out;
+
+	return genlmsg_end (skb, hdr);
+
+error_out:
+	genlmsg_cancel (skb, hdr);
+	return -1;
+}
+
+static int
+iplb_nl_cmd_flow4_dump (struct sk_buff * skb, struct netlink_callback * cb)
+{
+	int	n = 0, i, idx = cb->args[0];
+	struct iplb_flow4 * flow4;
+
+	hash_for_each_rcu (flow4_table, i, flow4, hash) {
+		if (n == idx) {
+			iplb_nl_flow4_send (skb, NETLINK_CB (cb->skb).portid,
+					    cb->nlh->nlmsg_seq, NLM_F_MULTI,
+					    flow4);
+			cb->args[0] = n + 1;
+			break;
+		}
+		n++;
+	}
+
+	return skb->len;
+}
+
+static int
 iplb_nl_cmd_lookup_weightbase (struct sk_buff * skb, struct genl_info * info)
 {
 	struct net	* net = sock_net (skb->sk);
@@ -1993,6 +2079,11 @@ static struct genl_ops iplb_nl_ops[] = {
 		.policy	= iplb_nl_policy,
 	},
 	{
+		.cmd	= IPLB_CMD_FLOW4_GET,
+		.dumpit	= iplb_nl_cmd_flow4_dump,
+		.policy	= iplb_nl_policy,
+	},
+	{
 		.cmd	= IPLB_CMD_LOOKUP_WEIGHTBASE,
 		.doit	= iplb_nl_cmd_lookup_weightbase,
 		.policy	= iplb_nl_policy,
@@ -2035,6 +2126,12 @@ __init iplb_init_module (void)
 	rc = nf_register_hooks (nf_iplb_ops, ARRAY_SIZE (nf_iplb_ops));
 	if (rc < 0)
 		goto nf_err;
+
+	/* init timer for aging flow tuple  */
+	init_timer_deferrable (&iplb_age_timer);
+	iplb_age_timer.function = cleanup_flow;
+	iplb_age_timer.data = 0;
+	mod_timer (&iplb_age_timer, jiffies + FLOW_AGE_INTERVAL);
 
 	printk (KERN_INFO "iplb (%s) is loaded\n", IPLB_VERSION);
 

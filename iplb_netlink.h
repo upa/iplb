@@ -57,6 +57,8 @@ enum {
 	IPLB_CMD_SRC4_GET,
 	IPLB_CMD_SRC6_GET,
 
+	IPLB_CMD_FLOW4_GET,
+
 	IPLB_CMD_LOOKUP_WEIGHTBASE,
 	IPLB_CMD_LOOKUP_HASHBASE,
 	IPLB_CMD_LOOKUP_FLOWBASE,
@@ -90,6 +92,7 @@ enum {
 	IPLB_ATTR_SRC4,			/* 3 2bit	*/
 	IPLB_ATTR_SRC6,			/* 12 bit	*/
 	IPLB_ATTR_STATS,		/* binary	*/
+	IPLB_ATTR_FLOW4,		/* binary */
 
 	__IPLB_ATTR_MAX,
 };
@@ -105,5 +108,19 @@ struct iplb_stats {
 };
 
 
+/* flow structure */
+
+struct iplb_flow4_info {
+	int	family;
+
+	__u8	protocol;
+	__u32	saddr, daddr;
+	__u16	sport, dport;
+
+	__u32	pkt_count;
+	__u32	byte_count;
+
+	__u32	relay_number;
+};
 
 #endif /* _LINUX_IPLB_NETLINK_H_ */
