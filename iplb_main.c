@@ -150,15 +150,13 @@ struct iplb_flow4 {
 	struct hlist_node	hash;	/* private for linux/hashtable */
 	struct rcu_head		rcu;	/* private */
 	unsigned long		key;	/* private */
+	unsigned long		updated;	/* lifetime to live. */
 
-	int	updated;	/* lifetime to live. jiffies. */
-
-	u8	protocol;	/* tcp or udp		*/
+	u8	protocol;	/* protocol number	*/
 	__be32	saddr, daddr;	/* src/dst address	*/
-	u16	sport, dport;	/* src/dst port number. (network byte order) */
+	u16	sport, dport;	/* src/dst port number (network byte order) */
 
-	u32	pkt_count;
-	u32	byte_count;
+	struct iplb_stats	stats[3]; /* 0 is newest. updated every AGE */
 
 	u8	relay_index;	/* the place of relay on relay_list */
 	/*
@@ -189,6 +187,12 @@ struct iplb_net {
 	struct iplb_rtable	rtable6;
 };
 
+
+
+/* prototype for cleanup_flow */
+static struct relay_addr *
+lookup_relay_addr_from_tuple_flowbase (struct sk_buff * skb,
+				       struct relay_tuple * tuple);
 
 
 /********************************
@@ -557,8 +561,6 @@ create_flow4 (u8 proto, __be32 saddr, __be32 daddr, u16 sport, u16 dport,
 	flow4->sport	= sport;
 	flow4->dport	= dport;
 	flow4->key	= FLOW4_HASH_KEY (proto, saddr, daddr, sport, dport);
-	flow4->pkt_count  = 0;
-	flow4->byte_count = 0;
 	flow4->relay_index = 0;
 	flow4->updated	= jiffies;
 
@@ -571,8 +573,12 @@ cleanup_flow (unsigned long arg)
 	int n;
 	struct iplb_flow4 * flow4;
 	struct hlist_node * tmp;
+	struct iplb_net   * iplb_net = (struct iplb_net *) arg;
 	unsigned long timeout;
 	unsigned long next_timer = jiffies + FLOW_AGE_INTERVAL;
+
+	if (iplb_net->lookup_fn != lookup_relay_addr_from_tuple_flowbase)
+		return;
 
 	hash_for_each_safe (flow4_table, n, tmp, flow4, hash) {
 
@@ -582,6 +588,10 @@ cleanup_flow (unsigned long arg)
 			hash_del_rcu (&flow4->hash);
 			kfree_rcu (flow4, rcu);
 		}
+
+		/* push back packet counters */
+		flow4->stats[2] = flow4->stats[1];
+		flow4->stats[1] = flow4->stats[0];
 	}
 
 	mod_timer (&iplb_age_timer, next_timer);
@@ -845,8 +855,8 @@ ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 		flow4->relay_index = 0;
 	}
 
-	flow4->pkt_count  += 1;
-	flow4->byte_count += skb->len;
+	flow4->stats[0].pkt_count  += 1;
+	flow4->stats[0].byte_count += skb->len;
 	flow4->updated    = jiffies;
 
 	return flow4->relay_index;
@@ -1103,6 +1113,11 @@ iplb_init_net (struct net * net)
 	INIT_IPLB_RTABLE (&iplb_net->rtable4, 32);
 	INIT_IPLB_RTABLE (&iplb_net->rtable6, 64);
 
+	/* init timer for aging flow tuple  */
+	init_timer_deferrable (&iplb_age_timer);
+	iplb_age_timer.function = cleanup_flow;
+	iplb_age_timer.data = (unsigned long) iplb_net;
+
 	return 0;
 };
 
@@ -1111,6 +1126,8 @@ static __net_exit void
 iplb_exit_net (struct net * net)
 {
 	struct iplb_net * iplb_net = net_generic (net, iplb_net_id);
+
+	del_timer_sync (&iplb_age_timer);
 
 	DESTROY_IPLB_RTABLE (&iplb_net->rtable4);
 	DESTROY_IPLB_RTABLE (&iplb_net->rtable6);
@@ -2003,8 +2020,9 @@ iplb_nl_flow4_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	info.daddr = flow4->daddr;
 	info.sport = flow4->sport;
 	info.dport = flow4->dport;
-	info.pkt_count = flow4->pkt_count;
-	info.byte_count = flow4->byte_count;
+	info.stats[0] = flow4->stats[0];
+	info.stats[1] = flow4->stats[1];
+	info.stats[2] = flow4->stats[2];
 	info.relay_index = flow4->relay_index;
 	
 	if (nla_put (skb, IPLB_ATTR_FLOW4, sizeof (struct iplb_flow4_info),
@@ -2071,6 +2089,9 @@ iplb_nl_cmd_lookup_flowbase (struct sk_buff * skb, struct genl_info * info)
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
 
 	iplb_net->lookup_fn = lookup_relay_addr_from_tuple_flowbase;
+
+	/* start aging thread */
+	mod_timer (&iplb_age_timer, jiffies + FLOW_AGE_INTERVAL);
 
 	printk (KERN_INFO "iplb: set lookup function \"flowbase\"\n");
 
@@ -2219,12 +2240,6 @@ __init iplb_init_module (void)
 	rc = nf_register_hooks (nf_iplb_ops, ARRAY_SIZE (nf_iplb_ops));
 	if (rc < 0)
 		goto nf_err;
-
-	/* init timer for aging flow tuple  */
-	init_timer_deferrable (&iplb_age_timer);
-	iplb_age_timer.function = cleanup_flow;
-	iplb_age_timer.data = 0;
-	//mod_timer (&iplb_age_timer, jiffies + FLOW_AGE_INTERVAL);
 
 	printk (KERN_INFO "iplb (%s) is loaded\n", IPLB_VERSION);
 

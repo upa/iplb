@@ -120,8 +120,7 @@ struct iplb_flow4_info {
 	__u32	saddr, daddr;
 	__u16	sport, dport;
 
-	__u32	pkt_count;
-	__u32	byte_count;
+	struct iplb_stats stats[3];
 };
 
 #endif /* _LINUX_IPLB_NETLINK_H_ */

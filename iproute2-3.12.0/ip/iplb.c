@@ -22,6 +22,10 @@
 #include "libgenl.h"
 
 
+/* XXX: this value comes from FLOW_AGE_INTERVAL on iplb_main.c */
+#define COUNTER_PUSHBACK_INTERVAL	10
+
+
 
 /* netlink socket handler */
 static struct rtnl_handle genl_rth;
@@ -58,6 +62,7 @@ struct iplb_param {
 	int	weight_flag;
 	int	encap_type_flag;
 	int	src_family;
+	int	detail_flag;
 
 	int	lookup_weightbase;
 	int	lookup_hashbase;
@@ -70,6 +75,7 @@ struct iplb_param {
 	int	index;
 };
 
+static struct iplb_param show_p;
 
 static void usage (void) __attribute ((noreturn));
 
@@ -224,6 +230,8 @@ parse_args (int argc, char ** argv, struct iplb_param * p)
 					*argv);
 				exit (-1);
 			}
+		} else if (strcmp (*argv, "detail") == 0) {
+			p->detail_flag = 1;
 		}
 
 		argc--;
@@ -263,7 +271,7 @@ usage (void)
 		 "             [ dport PORTNUM ]\n"
 		 "             [ index INDEX ]\n"
 		 "\n"
-		 "       ip lb show { detail | flow }\n"
+		 "       ip lb show { detail | flow [ detail ] }\n"
 		 "\n"
 		);
 
@@ -687,7 +695,6 @@ static int
 prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 {
 	int len, ai_family = 0, prefix_family = 0, relay_family = 0;
-	int detail_flag = 0;
 	__u8 weight, length, encap_type = 0, index;
 	char addr[16], addrbuf1[64], addrbuf2[64];
 	struct genlmsghdr * ghdr;
@@ -697,10 +704,6 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 	char * encap_type_name[] = {
 		"gre", "ipip", "lsrr"
 	};
-
-	if (arg != NULL && strncmp (arg, "detail", 7) == 0) {
-		detail_flag = 1;
-	}
 
 	memset (addr, 0, sizeof (addr));
 	memset (addrbuf1, 0, sizeof (addrbuf1));
@@ -792,7 +795,7 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 		return -1;
 	}
 
-	if (!detail_flag) {
+	if (!show_p.detail_flag) {
 		if (relay_family) {
 			fprintf (stdout,
 				 "prefix %s/%d relay %s weight %d type %s\n",
@@ -937,11 +940,32 @@ flow4_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 	inet_ntop (AF_INET, &info->saddr, srcaddr, sizeof (srcaddr));
 	inet_ntop (AF_INET, &info->daddr, dstaddr, sizeof (dstaddr));
 
-	printf ("%s %s:%u->%s:%u txpkt %u txbytes %u index %u\n", proto,
-		srcaddr, ntohs (info->sport),
-		dstaddr, ntohs (info->dport),
-		info->pkt_count, info->byte_count,
-		info->relay_index);
+	if (!show_p.detail_flag) {
+		printf ("%s %s:%u->%s:%u index %u\n", proto,
+			srcaddr, ntohs (info->sport),
+			dstaddr, ntohs (info->dport),
+			info->relay_index);
+	} else {
+		float pps, bps;
+
+		pps = (float)(info->stats[1].pkt_count -
+			      info->stats[2].pkt_count) / 10;
+
+		bps = (float)(info->stats[1].byte_count -
+			      info->stats[2].byte_count) / 10 * 8;
+
+		printf ("%s %s:%u->%s:%u index %u "
+			"txpkt %u txbyte %u "
+			"txpps %f txbps %f\n",
+			proto,
+			srcaddr, ntohs (info->sport),
+			dstaddr, ntohs (info->dport),
+			info->relay_index,
+			info->stats[0].pkt_count,
+			info->stats[0].byte_count,
+			pps, bps);
+
+	}
 
 	return 0;
 }
@@ -991,8 +1015,11 @@ do_show (int argc, char ** argv)
 	}
 
 	if (*argv && strcmp (*argv, "flow") == 0) {
+		parse_args (--argc, ++argv, &show_p);
 		return do_show_flow ();
 	}
+
+	parse_args (argc, argv, &show_p);
 
 	switch (preferred_family) {
 	case AF_UNSPEC :
@@ -1017,7 +1044,7 @@ do_show (int argc, char ** argv)
 		return -2;
 	}
 
-	if (rtnl_dump_filter (&genl_rth, prefix_nlmsg, *argv) < 0) {
+	if (rtnl_dump_filter (&genl_rth, prefix_nlmsg, NULL) < 0) {
 		fprintf (stderr, "Dump terminated\n");
 		exit (1);
 	}
