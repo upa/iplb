@@ -44,6 +44,11 @@ struct iplb_param {
 		struct in6_addr	src6;
 	} src;
 
+	union {
+		struct in_addr	src4;
+		struct in6_addr	src6;
+	} dst;
+
 	__u8	length;
 	__u8	weight;
 	__u8	encap_type;
@@ -57,6 +62,12 @@ struct iplb_param {
 	int	lookup_weightbase;
 	int	lookup_hashbase;
 	int	lookup_flowbase;
+
+	/* set flow related */
+	int	sport;
+	int	dport;
+	int	protocol;
+	int	index;
 };
 
 
@@ -157,12 +168,62 @@ parse_args (int argc, char ** argv, struct iplb_param * p)
 				invarg ("invalid src", *argv);
 				exit (-1);
 			}
+		} else if (strcmp (*argv, "dst") == 0) {
+			NEXT_ARG ();
+			if (inet_pton (AF_INET, *argv, &p->dst) > 0)
+				p->src_family = AF_INET;
+			else if (inet_pton (AF_INET6, *argv, &p->dst) > 0)
+				p->src_family = AF_INET6;
+			else {
+				invarg ("invalid dst", *argv);
+				exit (-1);
+			}
 		} else if (strcmp (*argv, "weightbase") == 0) {
 			p->lookup_weightbase = 1;
 		} else if (strcmp (*argv, "hashbase") == 0) {
 			p->lookup_hashbase = 1;
 		} else if (strcmp (*argv, "flowbase") == 0) {
 			p->lookup_flowbase = 1;
+		} else if (strcmp (*argv, "proto") == 0 ||
+			   strcmp (*argv, "protocol") == 0) {
+			NEXT_ARG ();
+			if (strcmp (*argv, "tcp") == 0) {
+				p->protocol = IPPROTO_TCP;
+			} else if (strcmp (*argv, "udp") == 0) {
+				p->protocol = IPPROTO_UDP;
+			} else if (strcmp (*argv, "icmp") == 0) {
+				p->protocol = IPPROTO_ICMP;
+			} else {
+				p->protocol = atoi (*argv);
+				if (p->protocol < 0) {
+					invarg ("invalid protocol", *argv);
+					exit (-1);
+				}
+			}
+		} else if (strcmp (*argv, "sport") == 0) {
+			NEXT_ARG ();
+			p->sport = atoi (*argv);
+			if (p->sport < 0 || p->sport > 65535) {
+				invarg ("invalid source port number", *argv);
+				exit (-1);
+			}
+		} else if (strcmp (*argv, "dport") == 0) {
+			NEXT_ARG ();
+			p->dport = atoi (*argv);
+			if (p->dport < 0 || p->dport > 65535) {
+				invarg ("invalid destination port number",
+					*argv);
+				exit (-1);
+			}
+		} else if (strcmp (*argv, "index") == 0 ||
+			   strcmp (*argv, "idx") == 0) {
+			NEXT_ARG ();
+			p->index = atoi (*argv);
+			if (p->index < 0) {
+				invarg ("invalid relay index",
+					*argv);
+				exit (-1);
+			}
 		}
 
 		argc--;
@@ -193,6 +254,14 @@ usage (void)
 		 "             [ { weightbase | hashbase | flowbase } ]\n"
 		 "\n"
 		 "       ip lb set tunnel src [ ADDRESS ]\n"
+		 "\n"
+		 "       ip lb set flow\n"
+		 "             [ proto PROTONUM]\n"
+		 "             [ src ADDRESS ]\n"
+		 "             [ dst ADDRESS ]\n"
+		 "             [ sport PORTNUM ]\n"
+		 "             [ dport PORTNUM ]\n"
+		 "             [ index INDEX ]\n"
 		 "\n"
 		 "       ip lb show { detail | flow }\n"
 		 "\n"
@@ -547,6 +616,50 @@ do_set_tunnel (int argc, char ** argv)
 }
 
 static int
+do_set_flow (int argc, char ** argv)
+{
+	int cmd;
+	struct iplb_param p;
+	struct iplb_flow4_info info;
+
+	memset (&info, 0, sizeof (struct iplb_flow4_info));
+
+	parse_args (argc, argv, &p);
+
+	switch (preferred_family) {
+	case AF_UNSPEC :
+	case AF_INET :
+		cmd = IPLB_CMD_FLOW4_SET;
+		break;
+	case AF_INET6 :
+		/* flow6_set will be implemented here */
+	default :
+		fprintf (stderr, "%s: invalid family \"%d\"\n",
+			 __func__, preferred_family);
+		return -1;
+	}
+
+	GENL_REQUEST (req, 128, genl_family, 0, IPLB_GENL_VERSION,
+		      cmd, NLM_F_REQUEST | NLM_F_ACK);
+
+	info.family	= AF_INET;
+	info.protocol	= p.protocol;
+	info.sport	= htons (p.sport);
+	info.dport	= htons (p.dport);
+	info.relay_index = p.index;
+	memcpy (&info.saddr, &p.src, sizeof (struct in_addr));
+	memcpy (&info.daddr, &p.dst, sizeof (struct in_addr));
+
+	addattr_l (&req.n, 128, IPLB_ATTR_FLOW4,
+		   &info, sizeof (struct iplb_flow4_info));
+
+	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
+		return -2;
+
+	return 0;
+}
+
+static int
 do_set (int argc, char ** argv)
 {
 	if (argc < 1) {
@@ -562,6 +675,9 @@ do_set (int argc, char ** argv)
 
 	if (strcmp (*argv, "tunnel") == 0)
 		return do_set_tunnel (argc - 1, argv + 1);
+
+	if (strcmp (*argv, "flow") == 0)
+		return do_set_flow (argc - 1, argv + 1);
 
 	fprintf (stderr, "unknown command \"%s\".\n", *argv);
 	return -1;

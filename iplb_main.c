@@ -556,7 +556,7 @@ create_flow4 (u8 proto, __be32 saddr, __be32 daddr, u16 sport, u16 dport,
 	flow4->daddr	= daddr;
 	flow4->sport	= sport;
 	flow4->dport	= dport;
-	flow4->key	= FLOW4_HASH_KEY (proto, saddr, dport, sport, dport);
+	flow4->key	= FLOW4_HASH_KEY (proto, saddr, daddr, sport, dport);
 	flow4->pkt_count  = 0;
 	flow4->byte_count = 0;
 	flow4->relay_index = 0;
@@ -827,11 +827,18 @@ ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 	flow4 = find_flow4 (ip->protocol, ip->saddr, ip->daddr,
 			    sport, dport);
 	if (flow4 == NULL) {
-		flow4 = create_flow4 (ip->protocol,ip->saddr, ip->daddr,
+		flow4 = create_flow4 (ip->protocol, ip->saddr, ip->daddr,
 				      sport, dport, GFP_ATOMIC);
 		if (flow4 == NULL)
 			return 0;
+
 		hash_add_rcu (flow4_table, &flow4->hash, flow4->key);
+	}
+
+	if (flow4->relay_index > RELAY_TABLE_MAX) {
+		printk (KERN_INFO IPLB_NAME ":%s: invalid relay index %u\n",
+			__func__, flow4->relay_index);
+		flow4->relay_index = 0;
 	}
 
 	if (tuple->relay_table[flow4->relay_index] == NULL) {
@@ -1942,6 +1949,40 @@ iplb_nl_cmd_src6_get (struct sk_buff * skb, struct genl_info * info)
 }
 
 static int
+iplb_nl_cmd_flow4_set (struct sk_buff * skb, struct genl_info * info)
+{
+	struct iplb_flow4 * flow4;
+	struct iplb_flow4_info * info4;
+
+	if (!info->attrs[IPLB_ATTR_FLOW4]) {
+		pr_debug ("%s: flow4 is not specified\n", __func__);
+		return -EINVAL;
+	}
+
+	info4 = nla_data (info->attrs[IPLB_ATTR_FLOW4]);
+
+	if (info4->relay_index > RELAY_TABLE_MAX) {
+		pr_debug ("%s: invalid relay index %u\n",
+			  __func__, info4->relay_index);
+		return -EINVAL;
+	}
+
+	flow4 = find_flow4 (info4->protocol, info4->saddr, info4->daddr,
+			    info4->sport, info4->dport);
+	if (!flow4) {
+		pr_debug ("%s: flow %u:%pI4:%u->%pI4:%u does not exist\n",
+			  __func__, info4->protocol,
+			  &info4->saddr, ntohs (info4->sport),
+			  &info4->daddr, ntohs (info4->dport));
+		return -ENOENT;
+	}
+
+	flow4->relay_index = info4->relay_index;
+
+	return 0;
+}
+
+static int
 iplb_nl_flow4_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 		    struct iplb_flow4 * flow4)
 {
@@ -2123,6 +2164,11 @@ static struct genl_ops iplb_nl_ops[] = {
 	{
 		.cmd	= IPLB_CMD_SRC6_GET,
 		.doit	= iplb_nl_cmd_src6_get,
+		.policy	= iplb_nl_policy,
+	},
+	{
+		.cmd	= IPLB_CMD_FLOW4_SET,
+		.doit	= iplb_nl_cmd_flow4_set,
 		.policy	= iplb_nl_policy,
 	},
 	{
