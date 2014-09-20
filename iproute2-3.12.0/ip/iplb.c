@@ -798,9 +798,11 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 	if (!show_p.detail_flag) {
 		if (relay_family) {
 			fprintf (stdout,
-				 "prefix %s/%d relay %s weight %d type %s\n",
+				 "prefix %s/%d relay %s weight %d type %s "
+				 "index %u\n",
 				 addrbuf1, length, addrbuf2, weight,
-				 encap_type_name[encap_type]);
+				 encap_type_name[encap_type],
+				 index);
 		} else if (!relay_family){
 			fprintf (stdout, "prefix %s/%d relay none\n",
 				 addrbuf1, length);
@@ -809,11 +811,10 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 		if (relay_family) {
 			fprintf (stdout,
 				 "prefix %s/%d relay %s weight %d type %s "
-				 "txpkt %u txbyte %u index %u\n",
+				 "index %u txpkt %u txbyte %u\n",
 				 addrbuf1, length, addrbuf2, weight,
 				 encap_type_name[encap_type],
-				 stats.pkt_count, stats.byte_count,
-				 index);
+				 index, stats.pkt_count, stats.byte_count);
 		}
 	}
 
@@ -955,14 +956,11 @@ flow4_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 			      info->stats[2].byte_count) / 10 * 8;
 
 		printf ("%s %s:%u->%s:%u index %u "
-			"txpkt %u txbyte %u "
-			"txpps %f txbps %f\n",
+			"%.2fpps %.2fbps\n",
 			proto,
 			srcaddr, ntohs (info->sport),
 			dstaddr, ntohs (info->dport),
 			info->relay_index,
-			info->stats[0].pkt_count,
-			info->stats[0].byte_count,
 			pps, bps);
 
 	}
