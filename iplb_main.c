@@ -99,18 +99,18 @@ struct iplb_rtable {
 	do {								\
 		write_lock_bh (&(rt)->lock);				\
 		Destroy_Patricia ((rt)->rtable,				\
-				  patricia_destroy_detour_tuple);	\
+				  patricia_destroy_relay_tuple);	\
 		(rt)->rtable = NULL;					\
 		write_unlock_bh (&(rt)->lock);				\
 	} while (0)
 
 
-/* detour address for one next hop */
-struct detour_addr {
+/* relay address for one next hop */
+struct relay_addr {
 	struct list_head	list;
 	struct rcu_head		rcu;
 
-	struct detour_tuple 	* tuple;	/* parent */
+	struct relay_tuple 	* tuple;	/* parent */
 	struct iplb_stats	stats;
 
 	u8			family;
@@ -118,22 +118,22 @@ struct detour_addr {
 	u8			encap_type;
 
 	union {
-		__be32		__detour_addr4[1];
-		__be32		__detour_addr6[4];
-	} detour_ip;
-#define detour_ip4	detour_ip.__detour_addr4
-#define detour_ip6	detour_ip.__detour_addr6
+		__be32		__relay_addr4[1];
+		__be32		__relay_addr6[4];
+	} relay_ip;
+#define relay_ip4	relay_ip.__relay_addr4
+#define relay_ip6	relay_ip.__relay_addr6
 };
 
-struct detour_tuple {
+struct relay_tuple {
 	struct list_head	list;		/* private */
 
 	prefix_t		* prefix;	/* prefix of route table */
 
 	u32			weight_sum;	
-	int			detour_count;
+	int			relay_count;
 
-	struct list_head	detour_list;	/* list of detour_addr */
+	struct list_head	relay_list;	/* list of relay_addr */
 };
 
 
@@ -153,10 +153,10 @@ struct iplb_flow4 {
 	u32	pkt_count;
 	u32	byte_count;
 
-	u32	detour_number;	/* the place of relay on detour_list */
+	u32	relay_number;	/* the place of relay on relay_list */
 	/*
-	 * if detour_number is larger than detour_count of tuple,
-	 * detour_number is changed to 1. 0 means "unspecified".
+	 * if relay_number is larger than relay_count of tuple,
+	 * relay_number is changed to 1. 0 means "unspecified".
 	 */
 };
 
@@ -173,9 +173,9 @@ struct iplb_net {
 	__be32			tunnel_src;	/* default 10.0.0.1	*/
 	struct in6_addr		tunnel_src6;	/* default 2001:db8::1	*/
 
-	/* lookup function for detour_addr from tuple. */
-	struct detour_addr * (* lookup_fn) (struct sk_buff *,
-					    struct detour_tuple * );
+	/* lookup function for relay_addr from tuple. */
+	struct relay_addr * (* lookup_fn) (struct sk_buff *,
+					   struct relay_tuple * );
 
 	/* routing tables for IPv4 and IPv6 */
 	struct iplb_rtable	rtable4;
@@ -246,8 +246,8 @@ dst2prefix (u8 af, void * addr, u16 len, prefix_t * prefix)
 	return;
 }
 
-static struct detour_tuple *
-find_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
+static struct relay_tuple *
+find_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 {
 	prefix_t prefix;
 	patricia_node_t * pn;
@@ -264,8 +264,8 @@ find_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 	return NULL;
 }
 
-static struct detour_tuple *
-find_detour_tuple_exact (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
+static struct relay_tuple *
+find_relay_tuple_exact (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 {
 	prefix_t prefix;
 	patricia_node_t * pn;
@@ -282,12 +282,12 @@ find_detour_tuple_exact (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 	return NULL;
 }
 
-static struct detour_tuple *
-add_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
+static struct relay_tuple *
+add_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 {
 	prefix_t		* prefix;
 	patricia_node_t		* pn;
-	struct detour_tuple	* tuple;
+	struct relay_tuple	* tuple;
 
 	prefix = kmalloc (sizeof (prefix_t), GFP_KERNEL);
 	memset (prefix, 0, sizeof (prefix_t));
@@ -303,14 +303,14 @@ add_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 		return pn->data;
 	}
 
-	tuple = (struct detour_tuple *) kmalloc (sizeof (struct detour_tuple),
-						 GFP_KERNEL);
-	memset (tuple, 0, sizeof (struct detour_tuple));
+	tuple = (struct relay_tuple *) kmalloc (sizeof (struct relay_tuple),
+						GFP_KERNEL);
+	memset (tuple, 0, sizeof (struct relay_tuple));
 
 	tuple->prefix		= prefix;
 	tuple->weight_sum	= 0;
-	tuple->detour_count	= 0;
-	INIT_LIST_HEAD (&tuple->detour_list);
+	tuple->relay_count	= 0;
+	INIT_LIST_HEAD (&tuple->relay_list);
 
 	pn->data = tuple;
 
@@ -323,18 +323,18 @@ add_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 
 
 static void
-destroy_detour_tuple (struct detour_tuple * tuple)
+destroy_relay_tuple (struct relay_tuple * tuple)
 {
 	struct list_head	* p, * tmp;
-	struct detour_addr	* detour;
+	struct relay_addr	* relay;
 
 	if (tuple == NULL)
 		return;
 
-	list_for_each_safe (p, tmp, &tuple->detour_list) {
-		detour = list_entry (p, struct detour_addr, list);
+	list_for_each_safe (p, tmp, &tuple->relay_list) {
+		relay = list_entry (p, struct relay_addr, list);
 		list_del_rcu (p);
-		kfree_rcu (detour, rcu);
+		kfree_rcu (relay, rcu);
 	}
 
 	kfree (tuple);
@@ -344,11 +344,11 @@ destroy_detour_tuple (struct detour_tuple * tuple)
 
 
 static int
-delete_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
+delete_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 {
 	prefix_t		prefix;
 	patricia_node_t		* pn;
-	struct detour_tuple	* tuple;
+	struct relay_tuple	* tuple;
 
 
 	dst2prefix (af, dst, len, &prefix);
@@ -361,12 +361,12 @@ delete_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 		return 0;
 	}
 
-	tuple = (struct detour_tuple *) pn->data;
+	tuple = (struct relay_tuple *) pn->data;
 	
 	list_del_rcu (&tuple->list);
 
 	pn->data = NULL;
-	destroy_detour_tuple (tuple);
+	destroy_relay_tuple (tuple);
 	patricia_remove (rt->rtable, pn);
 
 	write_unlock_bh (&rt->lock);
@@ -377,58 +377,58 @@ delete_detour_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 
 
 static void
-add_detour_addr_to_tuple (struct detour_tuple * tuple, 
+add_relay_addr_to_tuple (struct relay_tuple * tuple, 
 			  u8 af, void * addr, u8 weight, u8 encap_type)
 {
-	struct detour_addr * detour;
+	struct relay_addr * relay;
 
-	detour = (struct detour_addr *) kmalloc (sizeof (struct detour_addr),
+	relay = (struct relay_addr *) kmalloc (sizeof (struct relay_addr),
 						 GFP_KERNEL);
-	memset (detour, 0, sizeof (struct detour_addr));
+	memset (relay, 0, sizeof (struct relay_addr));
 
 
-	detour->tuple	= tuple;
-	detour->family	= af;
-	detour->weight	= weight;
-	detour->encap_type	= encap_type;
-	detour->stats.pkt_count	= 0;
-	detour->stats.byte_count = 0;
+	relay->tuple	= tuple;
+	relay->family	= af;
+	relay->weight	= weight;
+	relay->encap_type	= encap_type;
+	relay->stats.pkt_count	= 0;
+	relay->stats.byte_count = 0;
 
 	switch (af) {
 	case (AF_INET) :
-		ADDR4COPY (addr, &detour->detour_ip4);
+		ADDR4COPY (addr, &relay->relay_ip4);
 		break;
 	case (AF_INET6) :
-		ADDR6COPY (addr, &detour->detour_ip6);
+		ADDR6COPY (addr, &relay->relay_ip6);
 		break;
 	default :
 		printk (KERN_ERR "%s:%d: invalid family %u\n", 
 			__FUNCTION__, __LINE__, af);
-		kfree (detour);
+		kfree (relay);
 		return;
 	}
 	
-	list_add_rcu (&detour->list, &tuple->detour_list);
+	list_add_rcu (&relay->list, &tuple->relay_list);
 
 	tuple->weight_sum += weight;
-	tuple->detour_count++;
+	tuple->relay_count++;
 
 	return;
 }
 
 static void
-delete_detour_addr_from_tuple (struct detour_tuple * tuple, u8 af, void * addr)
+delete_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af, void * addr)
 {
 	struct list_head	* p, * tmp;
-	struct detour_addr	* detour;
+	struct relay_addr	* relay;
 
-	list_for_each_safe (p, tmp, &(tuple->detour_list)) {
-		detour = list_entry (p, struct detour_addr, list);
-		if (ADDRCMP (af, &detour->detour_ip, addr)) {
-			tuple->weight_sum -= detour->weight;
-			tuple->detour_count--;
+	list_for_each_safe (p, tmp, &(tuple->relay_list)) {
+		relay = list_entry (p, struct relay_addr, list);
+		if (ADDRCMP (af, &relay->relay_ip, addr)) {
+			tuple->weight_sum -= relay->weight;
+			tuple->relay_count--;
 			list_del_rcu (p);
-			kfree_rcu (detour, rcu);
+			kfree_rcu (relay, rcu);
 			return;
 		}
 	}
@@ -437,24 +437,24 @@ delete_detour_addr_from_tuple (struct detour_tuple * tuple, u8 af, void * addr)
 }
 
 static void
-update_iplb_stats (struct detour_addr * detour, struct sk_buff * skb)
+update_iplb_stats (struct relay_addr * relay, struct sk_buff * skb)
 {
-	detour->stats.pkt_count++;
-	detour->stats.byte_count += skb->len;
+	relay->stats.pkt_count++;
+	relay->stats.byte_count += skb->len;
 
 	return;
 }
 
-static struct detour_addr *
-find_detour_addr_from_tuple (struct detour_tuple * tuple, u8 af, void * addr)
+static struct relay_addr *
+find_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af, void * addr)
 {
-	struct detour_addr * detour;
+	struct relay_addr * relay;
 
-	detour = NULL;
+	relay = NULL;
 
-	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
-		if (ADDRCMP (af, &detour->detour_ip, addr))
-			return detour;
+	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
+		if (ADDRCMP (af, &relay->relay_ip, addr))
+			return relay;
 	}
 
 	return NULL;
@@ -462,9 +462,9 @@ find_detour_addr_from_tuple (struct detour_tuple * tuple, u8 af, void * addr)
 
 
 static void
-patricia_destroy_detour_tuple (void * data)
+patricia_destroy_relay_tuple (void * data)
 {
-	destroy_detour_tuple ((struct detour_tuple *) data);
+	destroy_relay_tuple ((struct relay_tuple *) data);
 
 	return;
 }
@@ -518,7 +518,7 @@ create_flow4 (u8 proto, __be32 saddr, __be32 daddr, u16 sport, u16 dport,
 	flow4->key	= FLOW4_HASH_KEY (proto, saddr, dport, sport, dport);
 	flow4->pkt_count  = 0;
 	flow4->byte_count = 0;
-	flow4->detour_number = 0;
+	flow4->relay_number = 0;
 	flow4->updated	= jiffies;
 
 	return flow4;
@@ -585,7 +585,7 @@ move_header (void * srcp, void * dstp, size_t len)
 
 
 static inline void
-ipv4_set_gre_encap (struct sk_buff * skb, struct detour_addr * detour,
+ipv4_set_gre_encap (struct sk_buff * skb, struct relay_addr * relay,
 		    struct iplb_net * iplb_net)
 {
 	struct iphdr	* iph, * ipiph;
@@ -619,7 +619,7 @@ ipv4_set_gre_encap (struct sk_buff * skb, struct detour_addr * detour,
 	ipiph->protocol = IPPROTO_GRE;
 	ipiph->check	= 0;
 	ipiph->saddr	= iplb_net->tunnel_src;
-	ipiph->daddr	= *detour->detour_ip4;
+	ipiph->daddr	= *relay->relay_ip4;
 	ipiph->check	= wrapsum (checksum (ipiph, sizeof (struct iphdr), 0));
 
 	greh = (struct grehdr *) (ipiph + 1);
@@ -630,7 +630,7 @@ ipv4_set_gre_encap (struct sk_buff * skb, struct detour_addr * detour,
 }
 
 static inline void
-ipv4_set_ipip_encap (struct sk_buff * skb, struct detour_addr * detour,
+ipv4_set_ipip_encap (struct sk_buff * skb, struct relay_addr * relay,
 		     struct iplb_net * iplb_net)
 {
 	struct iphdr	* iph, * ipiph;
@@ -655,14 +655,14 @@ ipv4_set_ipip_encap (struct sk_buff * skb, struct detour_addr * detour,
 	ipiph->protocol = IPPROTO_IPIP;
 	ipiph->check	= 0;
 	ipiph->saddr	= iplb_net->tunnel_src;
-	ipiph->daddr	= *detour->detour_ip4;
+	ipiph->daddr	= *relay->relay_ip4;
 	ipiph->check	= wrapsum (checksum (ipiph, sizeof (struct iphdr), 0));
 
 	return;
 }
 
 static inline void
-ipv4_set_lsrr_encap (struct sk_buff * skb, struct detour_addr * detour,
+ipv4_set_lsrr_encap (struct sk_buff * skb, struct relay_addr * relay,
 		     struct iplb_net * iplb_net)
 {
 	__be32	old_dst;
@@ -673,7 +673,7 @@ ipv4_set_lsrr_encap (struct sk_buff * skb, struct detour_addr * detour,
 		u8 type;
 		u8 length;
 		u8 pointer;
-		u32 detour_addr[1];
+		u32 relay_addr[1];
 	} __attribute__ ((__packed__));
 
 	struct optlsrr * lsrr;
@@ -697,10 +697,10 @@ ipv4_set_lsrr_encap (struct sk_buff * skb, struct detour_addr * detour,
 	lsrr->type	= IPOPT_LSRR;
 	lsrr->length	= sizeof (struct optlsrr) - 1; /* - nop */
 	lsrr->pointer   = 4;	/* XXX: number of records is always 1 */
-	lsrr->detour_addr[0] = old_dst;
-	// lsrr->detour_addr[1] = old_dst;
+	lsrr->relay_addr[0] = old_dst;
+	// lsrr->relay_addr[1] = old_dst;
 
-	new_iph->daddr	= *detour->detour_ip4;
+	new_iph->daddr	= *relay->relay_ip4;
 	new_iph->ihl	+= sizeof (struct optlsrr) / 4;
 	new_iph->tot_len	+= htons (sizeof (struct optlsrr));
 	new_iph->check	= 0;
@@ -711,7 +711,7 @@ ipv4_set_lsrr_encap (struct sk_buff * skb, struct detour_addr * detour,
 }
 
 static void (* ipv4_set_encap_func[]) (struct sk_buff * skb,
-				       struct detour_addr * detour,
+				       struct relay_addr * relay,
 				       struct iplb_net * iplb_net) = {
 	ipv4_set_gre_encap,
 	ipv4_set_ipip_encap,
@@ -755,7 +755,7 @@ ipv4_flow_hash (struct sk_buff * skb)
 }
 
 static inline u32
-ipv4_flow_classify (struct sk_buff * skb, struct detour_tuple * tuple)
+ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 {
 	u16	sport, dport;
 	struct iplb_flow4 * flow4;
@@ -793,48 +793,48 @@ ipv4_flow_classify (struct sk_buff * skb, struct detour_tuple * tuple)
 		hash_add_rcu (flow4_table, &flow4->hash, flow4->key);
 	}
 
-	if (unlikely (flow4->detour_number > tuple->detour_count)) {
-		flow4->detour_number = 0;
+	if (unlikely (flow4->relay_number > tuple->relay_count)) {
+		flow4->relay_number = 0;
 	}
 
 	flow4->pkt_count  += 1;
 	flow4->byte_count += skb->len;
 	flow4->updated    = jiffies;
 
-	return flow4->detour_number;
+	return flow4->relay_number;
 }
 
 
-static struct detour_addr *
-lookup_detour_addr_from_tuple_weightbase (struct sk_buff * skb,
-					  struct detour_tuple *tuple)
+static struct relay_addr *
+lookup_relay_addr_from_tuple_weightbase (struct sk_buff * skb,
+					 struct relay_tuple *tuple)
 {
 	u32 hash, w;
-	struct detour_addr * detour;
+	struct relay_addr * relay;
 
 	hash = ipv4_flow_hash (skb);
 	if (unlikely (!hash))
 		return NULL;
 
-	detour = NULL;
+	relay = NULL;
 	w = hash % tuple->weight_sum;
 
-	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
-		if (detour->weight >= w) {
+	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
+		if (relay->weight >= w) {
 			break;
 		}
-		w -= detour->weight;
+		w -= relay->weight;
 	}
 
-	return detour;
+	return relay;
 }
 
-static struct detour_addr *
-lookup_detour_addr_from_tuple_hashbase (struct sk_buff * skb,
-					struct detour_tuple * tuple)
+static struct relay_addr *
+lookup_relay_addr_from_tuple_hashbase (struct sk_buff * skb,
+					struct relay_tuple * tuple)
 {
 	u32 hash, h;
-	struct detour_addr * detour;
+	struct relay_addr * relay;
 
 	/* hashbase means all locator weights are 100. */
 
@@ -842,38 +842,38 @@ lookup_detour_addr_from_tuple_hashbase (struct sk_buff * skb,
 	if (unlikely (!hash))
 		return NULL;
 
-	if (tuple->detour_count == 0)
+	if (tuple->relay_count == 0)
 		return NULL;
 
-	detour = NULL;
-	h = hash % (tuple->detour_count * 100);
+	relay = NULL;
+	h = hash % (tuple->relay_count * 100);
 
-	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
+	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
 		if (100 >= h)
 			break;
 		h -= 100;
 	}
 
-	return detour;
+	return relay;
 }
 
-static struct detour_addr *
-lookup_detour_addr_from_tuple_flowbase (struct sk_buff * skb,
-					struct detour_tuple * tuple)
+static struct relay_addr *
+lookup_relay_addr_from_tuple_flowbase (struct sk_buff * skb,
+				       struct relay_tuple * tuple)
 {
 	u32 hash;
-	struct detour_addr * detour = NULL;
+	struct relay_addr * relay = NULL;
 
 	hash = ipv4_flow_classify (skb, tuple);
 	if (!hash)
 		return NULL;
 
-	list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
+	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
 		if (--hash == 0)
 			break;
 	}
 
-	return detour;
+	return relay;
 }
 
 static unsigned int
@@ -884,30 +884,30 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 		    int (*okfn)(struct sk_buff *))
 {
 	struct iphdr		* ip;
-	struct detour_tuple	* tuple;
-	struct detour_addr	* detour;
+	struct relay_tuple	* tuple;
+	struct relay_addr	* relay;
 	struct net		* net = get_net_ns_by_pid (1);
 	struct iplb_net 	* iplb_net = net_generic (net, iplb_net_id);
 
 	ip = (struct iphdr *) skb->data;
 
-	tuple = find_detour_tuple (&iplb_net->rtable4,
+	tuple = find_relay_tuple (&iplb_net->rtable4,
 				   AF_INET, &ip->daddr, 32);
 	if (!tuple)
 		return NF_ACCEPT;
 
-	detour = iplb_net->lookup_fn (skb, tuple);
-	if (!detour)
+	relay = iplb_net->lookup_fn (skb, tuple);
+	if (!relay)
 		return NF_ACCEPT;
 	
-	if (unlikely (detour->encap_type > IPLB_ENCAP_TYPE_MAX)) {
+	if (unlikely (relay->encap_type > IPLB_ENCAP_TYPE_MAX)) {
 		printk (KERN_ERR "%s: invalid encap type %u\n",
-			__func__, detour->encap_type);
+			__func__, relay->encap_type);
 		return NF_ACCEPT;
 	}
 
-	ipv4_set_encap_func[detour->encap_type] (skb, detour, iplb_net);
-	update_iplb_stats (detour, skb);
+	ipv4_set_encap_func[relay->encap_type] (skb, relay, iplb_net);
+	update_iplb_stats (relay, skb);
 
 	return NF_ACCEPT;
 }
@@ -918,7 +918,7 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 
 /*
 void (*ipv6_set_encap_func)[] (struct sk_buff * skb,
-			       struct detour_addr * detour,
+			       struct relay_addr * relay,
 			       struct iplb_net * iplb_net);
 */
 
@@ -961,7 +961,7 @@ ipv6_flow_hash (struct sk_buff * skb)
 
 
 static inline void
-ipv6_set_ip6ip6_encap (struct sk_buff * skb, struct detour_addr * detour,
+ipv6_set_ip6ip6_encap (struct sk_buff * skb, struct relay_addr * relay,
 		       struct iplb_net * iplb_net)
 {
 	struct ipv6hdr	* ip6;
@@ -988,7 +988,7 @@ ipv6_set_ip6ip6_encap (struct sk_buff * skb, struct detour_addr * detour,
 	ip6ip6h->nexthdr	= IPPROTO_IPV6;
 	ip6ip6h->hop_limit	= 16;
 	ADDR6COPY (&iplb_net->tunnel_src6, &ip6ip6h->saddr);
-	ADDR6COPY (detour->detour_ip6, &ip6ip6h->daddr);
+	ADDR6COPY (relay->relay_ip6, &ip6ip6h->daddr);
 	
 	return;
 }
@@ -1001,23 +1001,23 @@ nf_iplb_v6_localout (const struct nf_hook_ops * ops,
 		    int (*okfn)(struct sk_buff *))
 {
 	struct ipv6hdr		* ip6;
-	struct detour_tuple	* tuple;
-	struct detour_addr	* detour;
+	struct relay_tuple	* tuple;
+	struct relay_addr	* relay;
 	struct net		* net = get_net_ns_by_pid (1);
 	struct iplb_net 	* iplb_net = net_generic (net, iplb_net_id);
 
 	ip6 = (struct ipv6hdr *) skb->data;
 
-	tuple = find_detour_tuple (&iplb_net->rtable6,
+	tuple = find_relay_tuple (&iplb_net->rtable6,
 				   AF_INET6, &ip6->daddr, 64);
 	if (!tuple)
 		return NF_ACCEPT;
 
-	detour = iplb_net->lookup_fn (skb, tuple);
-	if (!detour)
+	relay = iplb_net->lookup_fn (skb, tuple);
+	if (!relay)
 		return NF_ACCEPT;
 
-	ipv6_set_ip6ip6_encap (skb, detour, iplb_net);
+	ipv6_set_ip6ip6_encap (skb, relay, iplb_net);
 
 	return NF_ACCEPT;
 }
@@ -1057,7 +1057,7 @@ iplb_init_net (struct net * net)
 	iplb_net->tunnel_src6.in6_u.u6_addr32[2] = 0x00000000;
 	iplb_net->tunnel_src6.in6_u.u6_addr32[3] = 0x01000000;
 
-	iplb_net->lookup_fn = lookup_detour_addr_from_tuple_weightbase;
+	iplb_net->lookup_fn = lookup_relay_addr_from_tuple_weightbase;
 	INIT_IPLB_RTABLE (&iplb_net->rtable4, 32);
 	INIT_IPLB_RTABLE (&iplb_net->rtable6, 64);
 
@@ -1126,7 +1126,7 @@ iplb_nl_cmd_prefix4_add (struct sk_buff * skb, struct genl_info * info)
 	__be32		prefix;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	if (!info->attrs[IPLB_ATTR_PREFIX4]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1141,13 +1141,13 @@ iplb_nl_cmd_prefix4_add (struct sk_buff * skb, struct genl_info * info)
 	length = nla_get_u8 (info->attrs[IPLB_ATTR_PREFIX_LENGTH]);
 
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable4,
-					 AF_INET, &prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable4,
+					AF_INET, &prefix, length);
 	if (tuple)
 		return -EEXIST;
 
-	tuple = add_detour_tuple (&iplb_net->rtable4,
-				  AF_INET, &prefix, length);
+	tuple = add_relay_tuple (&iplb_net->rtable4,
+				 AF_INET, &prefix, length);
 
 	if (!tuple) {
 		return -EINVAL;
@@ -1163,7 +1163,7 @@ iplb_nl_cmd_prefix6_add (struct sk_buff * skb, struct genl_info * info)
 	struct in6_addr	prefix;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	if (!info->attrs[IPLB_ATTR_PREFIX6]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1185,13 +1185,13 @@ iplb_nl_cmd_prefix6_add (struct sk_buff * skb, struct genl_info * info)
 	}
 
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable6,
-					 AF_INET6, &prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable6,
+					AF_INET6, &prefix, length);
 	if (tuple)
 		return -EEXIST;
 
-	tuple = add_detour_tuple (&iplb_net->rtable6,
-				  AF_INET6, &prefix, length);
+	tuple = add_relay_tuple (&iplb_net->rtable6,
+				 AF_INET6, &prefix, length);
 
 	if (!tuple)
 		return -EINVAL;
@@ -1207,7 +1207,7 @@ iplb_nl_cmd_prefix4_delete (struct sk_buff * skb, struct genl_info * info)
 	__be32		prefix;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	if (!info->attrs[IPLB_ATTR_PREFIX4]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1222,13 +1222,13 @@ iplb_nl_cmd_prefix4_delete (struct sk_buff * skb, struct genl_info * info)
 	length = nla_get_u8 (info->attrs[IPLB_ATTR_PREFIX_LENGTH]);
 
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable4,
-					 AF_INET, &prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable4,
+					AF_INET, &prefix, length);
 	if (!tuple)
 		return -ENOENT;
 
-	rc = delete_detour_tuple (&iplb_net->rtable4,
-				  AF_INET, &prefix, length);
+	rc = delete_relay_tuple (&iplb_net->rtable4,
+				 AF_INET, &prefix, length);
 	if (!rc)
 		return -ENOENT;
 
@@ -1243,7 +1243,7 @@ iplb_nl_cmd_prefix6_delete (struct sk_buff * skb, struct genl_info * info)
 	struct in6_addr	prefix;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	if (!info->attrs[IPLB_ATTR_PREFIX6]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1265,13 +1265,13 @@ iplb_nl_cmd_prefix6_delete (struct sk_buff * skb, struct genl_info * info)
 	}
 
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable6,
-					 AF_INET6, &prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable6,
+					AF_INET6, &prefix, length);
 	if (!tuple)
 		return -ENOENT;
 
-	rc = delete_detour_tuple (&iplb_net->rtable6,
-				  AF_INET6, &prefix, length);
+	rc = delete_relay_tuple (&iplb_net->rtable6,
+				 AF_INET6, &prefix, length);
 	if (!rc)
 		return -ENOENT;
 
@@ -1282,10 +1282,10 @@ static int
 iplb_nl_cmd_relay4_add (struct sk_buff * skb, struct genl_info * info)
 {
 	u8		length, weight, encap_type;
-	__be32		prefix, relay;
+	__be32		prefix, addr;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	if (!info->attrs[IPLB_ATTR_PREFIX4]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1303,7 +1303,7 @@ iplb_nl_cmd_relay4_add (struct sk_buff * skb, struct genl_info * info)
 		pr_debug ("%s: relay addr is not specified\n", __func__);
 		return -EINVAL;
 	}
-	relay = nla_get_be32 (info->attrs[IPLB_ATTR_RELAY4]);
+	addr = nla_get_be32 (info->attrs[IPLB_ATTR_RELAY4]);
 
 	if (!info->attrs[IPLB_ATTR_WEIGHT]) {
 		weight = 100;
@@ -1317,13 +1317,13 @@ iplb_nl_cmd_relay4_add (struct sk_buff * skb, struct genl_info * info)
 		encap_type = nla_get_u8 (info->attrs[IPLB_ATTR_ENCAP_TYPE]);
 	}
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable4,
-					 AF_INET, &prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable4,
+					AF_INET, &prefix, length);
 	if (!tuple)
-		tuple = add_detour_tuple (&iplb_net->rtable4,
-					  AF_INET, &prefix, length);
+		tuple = add_relay_tuple (&iplb_net->rtable4,
+					 AF_INET, &prefix, length);
 
-	add_detour_addr_to_tuple (tuple, AF_INET, &relay, weight, encap_type);
+	add_relay_addr_to_tuple (tuple, AF_INET, &addr, weight, encap_type);
 
 	return 0;
 }
@@ -1332,10 +1332,10 @@ static int
 iplb_nl_cmd_relay6_add (struct sk_buff * skb, struct genl_info * info)
 {
 	u8		length, weight, encap_type;
-	struct in6_addr	prefix, relay;
+	struct in6_addr	prefix, addr;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	if (!info->attrs[IPLB_ATTR_PREFIX6]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1353,7 +1353,7 @@ iplb_nl_cmd_relay6_add (struct sk_buff * skb, struct genl_info * info)
 		pr_debug ("%s: relay addr is not specified\n", __func__);
 		return -EINVAL;
 	}
-	nla_memcpy (&relay, info->attrs[IPLB_ATTR_RELAY6], sizeof (prefix));
+	nla_memcpy (&addr, info->attrs[IPLB_ATTR_RELAY6], sizeof (addr));
 
 	if (!info->attrs[IPLB_ATTR_WEIGHT]) {
 		weight = 100;
@@ -1366,13 +1366,13 @@ iplb_nl_cmd_relay6_add (struct sk_buff * skb, struct genl_info * info)
 		encap_type = nla_get_u8 (info->attrs[IPLB_ATTR_ENCAP_TYPE]);
 	}
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable6,
-					 AF_INET6, &prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable6,
+					AF_INET6, &prefix, length);
 	if (!tuple)
-		tuple = add_detour_tuple (&iplb_net->rtable6,
-					  AF_INET6, &prefix, length);
+		tuple = add_relay_tuple (&iplb_net->rtable6,
+					 AF_INET6, &prefix, length);
 
-	add_detour_addr_to_tuple (tuple, AF_INET6, &relay, weight, encap_type);
+	add_relay_addr_to_tuple (tuple, AF_INET6, &addr, weight, encap_type);
 
 	return 0;
 }
@@ -1381,10 +1381,10 @@ static int
 iplb_nl_cmd_relay4_delete (struct sk_buff * skb, struct genl_info * info)
 {
 	u8		length;
-	__be32		prefix, relay;
+	__be32		prefix, addr;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	if (!info->attrs[IPLB_ATTR_PREFIX4]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1402,15 +1402,15 @@ iplb_nl_cmd_relay4_delete (struct sk_buff * skb, struct genl_info * info)
 		pr_debug ("%s: relay addr is not specified\n", __func__);
 		return -EINVAL;
 	}
-	relay = nla_get_be32 (info->attrs[IPLB_ATTR_RELAY4]);
+	addr = nla_get_be32 (info->attrs[IPLB_ATTR_RELAY4]);
 
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable4,
-					 AF_INET, &prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable4,
+					AF_INET, &prefix, length);
 	if (!tuple)
 		return -ENOENT;
 
-	delete_detour_addr_from_tuple (tuple, AF_INET, &relay);
+	delete_relay_addr_from_tuple (tuple, AF_INET, &addr);
 
 	return 0;
 }
@@ -1419,10 +1419,10 @@ static int
 iplb_nl_cmd_relay6_delete (struct sk_buff * skb, struct genl_info * info)
 {
 	u8		length;
-	struct in6_addr	prefix, relay;
+	struct in6_addr	prefix, addr;
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	if (!info->attrs[IPLB_ATTR_PREFIX6]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1440,22 +1440,22 @@ iplb_nl_cmd_relay6_delete (struct sk_buff * skb, struct genl_info * info)
 		pr_debug ("%s: relay addr is not specified\n", __func__);
 		return -EINVAL;
 	}
-	nla_memcpy (&relay, info->attrs[IPLB_ATTR_RELAY6], sizeof (relay));
+	nla_memcpy (&addr, info->attrs[IPLB_ATTR_RELAY6], sizeof (addr));
 
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable6,
-					 AF_INET6, &prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable6,
+					AF_INET6, &prefix, length);
 	if (!tuple)
 		return -ENOENT;
 
-	delete_detour_addr_from_tuple (tuple, AF_INET6, &relay);
+	delete_relay_addr_from_tuple (tuple, AF_INET6, &addr);
 
 	return 0;
 }
 
 static int
 iplb_nl_prefix_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
-		     int cmd, struct detour_tuple * tuple) 
+		     int cmd, struct relay_tuple * tuple) 
 {
 	void * hdr;
 	int prefix_attr, addrlen;
@@ -1499,12 +1499,12 @@ error_out:
 
 static int
 iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
-		     int cmd, struct detour_addr * detour)
+		     int cmd, struct relay_addr * relay)
 {
 	void * hdr;
 	int prefix_attr, relay_attr, addrlen;
 
-	if (!skb || !detour)
+	if (!skb || !relay)
 		return -1;
 
 	hdr = genlmsg_put (skb, pid, seq, &iplb_nl_family, flags, cmd);
@@ -1514,7 +1514,7 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 
 	/* put prefix, length, relay, weight, stats */
 
-	switch (detour->family) {
+	switch (relay->family) {
 	case (AF_INET) :
 		prefix_attr = IPLB_ATTR_PREFIX4;
 		relay_attr = IPLB_ATTR_RELAY4;
@@ -1526,19 +1526,19 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 		addrlen = sizeof (struct in6_addr);
 		break;
 	default :
-		printk (KERN_ERR "%s: invalid family of detour %d",
-			__func__, detour->family);
+		printk (KERN_ERR "%s: invalid family of relay %d",
+			__func__, relay->family);
 		goto error_out;
 	}
 
-	if (nla_put (skb, prefix_attr, addrlen, &detour->tuple->prefix->add) ||
-	    nla_put (skb, relay_attr, addrlen, &detour->detour_ip) ||
+	if (nla_put (skb, prefix_attr, addrlen, &relay->tuple->prefix->add) ||
+	    nla_put (skb, relay_attr, addrlen, &relay->relay_ip) ||
 	    nla_put_u8 (skb, IPLB_ATTR_PREFIX_LENGTH,
-			detour->tuple->prefix->bitlen) ||
-	    nla_put_u8 (skb, IPLB_ATTR_WEIGHT, detour->weight) ||
-	    nla_put_u8 (skb, IPLB_ATTR_ENCAP_TYPE, detour->encap_type) ||
-	    nla_put (skb, IPLB_ATTR_STATS, sizeof (struct detour_addr),
-		     &detour->stats))
+			relay->tuple->prefix->bitlen) ||
+	    nla_put_u8 (skb, IPLB_ATTR_WEIGHT, relay->weight) ||
+	    nla_put_u8 (skb, IPLB_ATTR_ENCAP_TYPE, relay->encap_type) ||
+	    nla_put (skb, IPLB_ATTR_STATS, sizeof (struct relay_addr),
+		     &relay->stats))
 		goto error_out;
 
 	return genlmsg_end (skb, hdr);
@@ -1550,19 +1550,19 @@ error_out:
 
 static int
 iplb_nl_tuple_send (struct sk_buff * skb, struct netlink_callback * cb,
-		    int cmd, struct detour_tuple * tuple)
+		    int cmd, struct relay_tuple * tuple)
 {
-	struct detour_addr * detour;
+	struct relay_addr * relay;
 
-	if (tuple->detour_count == 0) {
+	if (tuple->relay_count == 0) {
 		iplb_nl_prefix_send (skb, NETLINK_CB (cb->skb).portid,
 				     cb->nlh->nlmsg_seq, NLM_F_MULTI, cmd,
 				     tuple);
 	} else {
-		list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
+		list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
 			iplb_nl_relay_send (skb, NETLINK_CB (cb->skb).portid,
-					     cb->nlh->nlmsg_seq, NLM_F_MULTI, 
-					     cmd, detour);
+					    cb->nlh->nlmsg_seq, NLM_F_MULTI, 
+					    cmd, relay);
 		}
 	}
 
@@ -1579,8 +1579,8 @@ iplb_nl_cmd_prefix4_get (struct sk_buff * skb, struct genl_info * info)
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net * iplb_net = net_generic (net, iplb_net_id);
 	struct sk_buff	* msg;
-	struct detour_tuple	* tuple;
-	struct detour_addr	* detour;
+	struct relay_tuple	* tuple;
+	struct relay_addr	* relay;
 
 	if (!info) {
 		pr_debug ("%s: genl_info is NULL\n", __func__);
@@ -1602,17 +1602,17 @@ iplb_nl_cmd_prefix4_get (struct sk_buff * skb, struct genl_info * info)
 	msg = nlmsg_new (NLMSG_DEFAULT_SIZE, GFP_KERNEL);
 
 
-	tuple = find_detour_tuple (&iplb_net->rtable4, AF_INET,
-				   &prefix, length);
+	tuple = find_relay_tuple (&iplb_net->rtable4, AF_INET,
+				  &prefix, length);
 
-	if(tuple->detour_count == 0)
+	if(tuple->relay_count == 0)
 		iplb_nl_prefix_send (skb, info->snd_portid, info->snd_seq,
 				     0, IPLB_CMD_PREFIX4_GET, tuple);
 	else {
-		list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
+		list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
 			iplb_nl_relay_send (skb, info->snd_portid,
-					     info->snd_seq, 0,
-					     IPLB_CMD_PREFIX4_GET, detour);
+					    info->snd_seq, 0,
+					    IPLB_CMD_PREFIX4_GET, relay);
 		}
 	}
 
@@ -1626,7 +1626,7 @@ iplb_nl_cmd_prefix4_dump (struct sk_buff * skb, struct netlink_callback * cb)
 	int 		n = 0, idx = cb->args[0];
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net * iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 
 	list_for_each_entry_rcu (tuple, &iplb_net->rtable4.rlist, list) {
 		if (n == idx) {
@@ -1653,8 +1653,8 @@ iplb_nl_cmd_prefix6_get (struct sk_buff * skb, struct genl_info * info)
 	struct iplb_net * iplb_net = net_generic (net, iplb_net_id);
 	struct in6_addr	prefix;
 	struct sk_buff	* msg;
-	struct detour_tuple	* tuple;
-	struct detour_addr	* detour;
+	struct relay_tuple	* tuple;
+	struct relay_addr	* relay;
 
 	if (info->attrs[IPLB_ATTR_PREFIX6]) {
 		pr_debug ("%s: prefix is not specified\n", __func__);
@@ -1672,17 +1672,17 @@ iplb_nl_cmd_prefix6_get (struct sk_buff * skb, struct genl_info * info)
 	msg = nlmsg_new (NLMSG_DEFAULT_SIZE, GFP_KERNEL);
 
 
-	tuple = find_detour_tuple (&iplb_net->rtable6, AF_INET6,
-				   &prefix, length);
+	tuple = find_relay_tuple (&iplb_net->rtable6, AF_INET6,
+				  &prefix, length);
 
-	if(tuple->detour_count == 0)
+	if(tuple->relay_count == 0)
 		iplb_nl_prefix_send (skb, info->snd_portid, info->snd_seq,
 				     0, IPLB_CMD_PREFIX6_GET, tuple);
 	else {
-		list_for_each_entry_rcu (detour, &tuple->detour_list, list) {
+		list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
 			iplb_nl_relay_send (skb, info->snd_portid,
-					     info->snd_seq, 0,
-					     IPLB_CMD_PREFIX6_GET, detour);
+					    info->snd_seq, 0,
+					    IPLB_CMD_PREFIX6_GET, relay);
 		}
 	}
 
@@ -1696,7 +1696,7 @@ iplb_nl_cmd_prefix6_dump (struct sk_buff * skb, struct netlink_callback * cb)
 	int 		n = 0, idx = cb->args[0];
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net * iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
+	struct relay_tuple * tuple;
 	
 	list_for_each_entry_rcu (tuple, &iplb_net->rtable6.rlist, list) {
 		if (n == idx) {
@@ -1720,11 +1720,11 @@ iplb_nl_cmd_weight_set (struct sk_buff * skb, struct genl_info * info)
 {
 	u8	length, weight;
 	int	prefix_family, relay_family;
-	__be32	prefix[4], relay[4];
+	__be32	prefix[4], addr[4];
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
-	struct detour_tuple * tuple;
-	struct detour_addr  * detour;
+	struct relay_tuple * tuple;
+	struct relay_addr  * relay;
 	
 	length = weight = 0;
 	prefix_family = relay_family = 0;
@@ -1740,11 +1740,11 @@ iplb_nl_cmd_weight_set (struct sk_buff * skb, struct genl_info * info)
 	}
 
 	if (info->attrs[IPLB_ATTR_RELAY4]) {
-		relay[0] = nla_get_be32 (info->attrs[IPLB_ATTR_RELAY4]);
+		addr[0] = nla_get_be32 (info->attrs[IPLB_ATTR_RELAY4]);
 		relay_family = AF_INET;
 	}
 	if (info->attrs[IPLB_ATTR_RELAY6]) {
-		nla_memcpy (relay, info->attrs[IPLB_ATTR_RELAY6],
+		nla_memcpy (addr, info->attrs[IPLB_ATTR_RELAY6],
 			    sizeof (relay));
 		relay_family = AF_INET6;
 	}
@@ -1768,18 +1768,18 @@ iplb_nl_cmd_weight_set (struct sk_buff * skb, struct genl_info * info)
 	weight = nla_get_u8 (info->attrs[IPLB_ATTR_WEIGHT]);
 
 
-	tuple = find_detour_tuple_exact (&iplb_net->rtable4,
-					 prefix_family, prefix, length);
+	tuple = find_relay_tuple_exact (&iplb_net->rtable4,
+					prefix_family, prefix, length);
 
 	if (!tuple)
 		return -ENOENT;
 	
-	detour = find_detour_addr_from_tuple (tuple, relay_family, relay);
+	relay = find_relay_addr_from_tuple (tuple, relay_family, addr);
 	
-	if (detour) {
-		tuple->weight_sum -= detour->weight;
+	if (relay) {
+		tuple->weight_sum -= relay->weight;
 		tuple->weight_sum += weight;
-		detour->weight = weight;
+		relay->weight = weight;
 	} else {
 		return -ENOENT;
 	}
@@ -1917,7 +1917,7 @@ iplb_nl_flow4_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	info.dport = flow4->dport;
 	info.pkt_count = flow4->pkt_count;
 	info.byte_count = flow4->byte_count;
-	info.relay_number = flow4->detour_number;
+	info.relay_number = flow4->relay_number;
 	
 	if (nla_put (skb, IPLB_ATTR_FLOW4, sizeof (struct iplb_flow4_info),
 		    &info))
@@ -1956,7 +1956,7 @@ iplb_nl_cmd_lookup_weightbase (struct sk_buff * skb, struct genl_info * info)
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
 
-	iplb_net->lookup_fn = lookup_detour_addr_from_tuple_weightbase;
+	iplb_net->lookup_fn = lookup_relay_addr_from_tuple_weightbase;
 
 	printk (KERN_INFO "iplb: set lookup function \"weightbase\"\n");
 
@@ -1969,7 +1969,7 @@ iplb_nl_cmd_lookup_hashbase (struct sk_buff * skb, struct genl_info * info)
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
 
-	iplb_net->lookup_fn = lookup_detour_addr_from_tuple_hashbase;
+	iplb_net->lookup_fn = lookup_relay_addr_from_tuple_hashbase;
 
 	printk (KERN_INFO "iplb: set lookup function \"hashbase\"\n");
 
@@ -1982,7 +1982,7 @@ iplb_nl_cmd_lookup_flowbase (struct sk_buff * skb, struct genl_info * info)
 	struct net	* net = sock_net (skb->sk);
 	struct iplb_net	* iplb_net = net_generic (net, iplb_net_id);
 
-	iplb_net->lookup_fn = lookup_detour_addr_from_tuple_flowbase;
+	iplb_net->lookup_fn = lookup_relay_addr_from_tuple_flowbase;
 
 	printk (KERN_INFO "iplb: set lookup function \"flowbase\"\n");
 
