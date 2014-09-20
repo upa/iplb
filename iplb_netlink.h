@@ -87,12 +87,13 @@ enum {
 	IPLB_ATTR_PREFIX_LENGTH,	/* 8 bit	*/
 	IPLB_ATTR_RELAY4,		/* 32 bit 	*/
 	IPLB_ATTR_RELAY6,		/* 128 bit	*/
+	IPLB_ATTR_RELAY_INDEX,		/* 8bit		*/
 	IPLB_ATTR_WEIGHT,		/* 8 bit 	*/
 	IPLB_ATTR_ENCAP_TYPE,		/* 8 bit	*/
 	IPLB_ATTR_SRC4,			/* 3 2bit	*/
 	IPLB_ATTR_SRC6,			/* 12 bit	*/
 	IPLB_ATTR_STATS,		/* binary	*/
-	IPLB_ATTR_FLOW4,		/* binary */
+	IPLB_ATTR_FLOW4,		/* binary	*/
 
 	__IPLB_ATTR_MAX,
 };
@@ -113,14 +114,13 @@ struct iplb_stats {
 struct iplb_flow4_info {
 	int	family;
 
+	__u8	relay_index;
 	__u8	protocol;
 	__u32	saddr, daddr;
 	__u16	sport, dport;
 
 	__u32	pkt_count;
 	__u32	byte_count;
-
-	__u32	relay_number;
 };
 
 #endif /* _LINUX_IPLB_NETLINK_H_ */

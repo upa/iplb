@@ -41,7 +41,8 @@
 
 #include "iplb_netlink.h"
 
-#define IPLB_VERSION "0.0.1"
+#define IPLB_VERSION	"0.0.1"
+#define IPLB_NAME	"iplb"
 
 MODULE_VERSION (IPLB_VERSION);
 MODULE_LICENSE ("GPL");
@@ -116,6 +117,7 @@ struct relay_addr {
 	u8			family;
 	u8			weight;
 	u8			encap_type;
+	u8			index;		/* index of array */
 
 	union {
 		__be32		__relay_addr4[1];
@@ -125,6 +127,10 @@ struct relay_addr {
 #define relay_ip6	relay_ip.__relay_addr6
 };
 
+/* max num of relay for 1 prefix. */
+#define RELAY_TABLE_SIZE	64
+#define RELAY_TABLE_MAX		63	/* idx 0 means Native Forwaridng */
+
 struct relay_tuple {
 	struct list_head	list;		/* private */
 
@@ -133,6 +139,7 @@ struct relay_tuple {
 	u32			weight_sum;	
 	int			relay_count;
 
+	struct relay_addr	* relay_table[RELAY_TABLE_SIZE];
 	struct list_head	relay_list;	/* list of relay_addr */
 };
 
@@ -153,10 +160,10 @@ struct iplb_flow4 {
 	u32	pkt_count;
 	u32	byte_count;
 
-	u32	relay_number;	/* the place of relay on relay_list */
+	u8	relay_index;	/* the place of relay on relay_list */
 	/*
-	 * if relay_number is larger than relay_count of tuple,
-	 * relay_number is changed to 1. 0 means "unspecified".
+	 * if tuple->relay_table[relay_index] is NULL,
+	 * relay_index is changed to 0. 0 means "Native forwarding".
 	 */
 };
 
@@ -240,7 +247,8 @@ dst2prefix (u8 af, void * addr, u16 len, prefix_t * prefix)
 		ADDR6COPY (addr, &prefix->add);
 		break;
 	default :
-		printk (KERN_ERR "%s: invalid family %u\n", __func__, af);
+		printk (KERN_ERR IPLB_NAME
+			":%s: invalid family %u\n", __func__, af);
 	};
 
 	return;
@@ -285,6 +293,7 @@ find_relay_tuple_exact (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 static struct relay_tuple *
 add_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 {
+	int n;
 	prefix_t		* prefix;
 	patricia_node_t		* pn;
 	struct relay_tuple	* tuple;
@@ -313,6 +322,10 @@ add_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 	INIT_LIST_HEAD (&tuple->relay_list);
 
 	pn->data = tuple;
+
+	for (n = 0; n < RELAY_TABLE_SIZE; n++) {
+		tuple->relay_table[n] = NULL;
+	}
 
 	list_add_rcu (&tuple->list, &rt->rlist);
 
@@ -380,10 +393,11 @@ static void
 add_relay_addr_to_tuple (struct relay_tuple * tuple, 
 			  u8 af, void * addr, u8 weight, u8 encap_type)
 {
+	int idx;
 	struct relay_addr * relay;
 
 	relay = (struct relay_addr *) kmalloc (sizeof (struct relay_addr),
-						 GFP_KERNEL);
+					       GFP_KERNEL);
 	memset (relay, 0, sizeof (struct relay_addr));
 
 
@@ -402,12 +416,38 @@ add_relay_addr_to_tuple (struct relay_tuple * tuple,
 		ADDR6COPY (addr, &relay->relay_ip6);
 		break;
 	default :
-		printk (KERN_ERR "%s:%d: invalid family %u\n", 
+		printk (KERN_ERR IPLB_NAME ":%s:%d: invalid family %u\n",
 			__FUNCTION__, __LINE__, af);
 		kfree (relay);
 		return;
 	}
 	
+	/* XXX: this section should be implemented as critical section. */
+	for (idx = 1; idx < RELAY_TABLE_SIZE; idx++) {
+		if (tuple->relay_table[idx] == NULL) {
+			relay->index = idx;
+			tuple->relay_table[idx] = relay;
+			break;
+		}
+	}
+	if (idx == RELAY_TABLE_SIZE) {
+		switch (af) {
+		case AF_INET :
+			printk (KERN_ERR IPLB_NAME
+				": relay %pI4, too many relays for %pI4\n",
+				addr, &tuple->prefix->add);
+			break;
+		case AF_INET6 :
+			printk (KERN_ERR IPLB_NAME
+				": relay %pI6, too many relays for %pI6\n",
+				addr, &tuple->prefix->add);
+			break;
+		}
+		kfree (relay);
+		return;
+	}
+
+
 	list_add_rcu (&relay->list, &tuple->relay_list);
 
 	tuple->weight_sum += weight;
@@ -427,6 +467,7 @@ delete_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af, void * addr)
 		if (ADDRCMP (af, &relay->relay_ip, addr)) {
 			tuple->weight_sum -= relay->weight;
 			tuple->relay_count--;
+			tuple->relay_table[relay->index] = NULL;
 			list_del_rcu (p);
 			kfree_rcu (relay, rcu);
 			return;
@@ -518,7 +559,7 @@ create_flow4 (u8 proto, __be32 saddr, __be32 daddr, u16 sport, u16 dport,
 	flow4->key	= FLOW4_HASH_KEY (proto, saddr, dport, sport, dport);
 	flow4->pkt_count  = 0;
 	flow4->byte_count = 0;
-	flow4->relay_number = 0;
+	flow4->relay_index = 0;
 	flow4->updated	= jiffies;
 
 	return flow4;
@@ -754,7 +795,7 @@ ipv4_flow_hash (struct sk_buff * skb)
 	return hash_32 (val1 + val2, 16);
 }
 
-static inline u32
+static inline u8
 ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 {
 	u16	sport, dport;
@@ -793,15 +834,15 @@ ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 		hash_add_rcu (flow4_table, &flow4->hash, flow4->key);
 	}
 
-	if (unlikely (flow4->relay_number > tuple->relay_count)) {
-		flow4->relay_number = 0;
+	if (tuple->relay_table[flow4->relay_index] == NULL) {
+		flow4->relay_index = 0;
 	}
 
 	flow4->pkt_count  += 1;
 	flow4->byte_count += skb->len;
 	flow4->updated    = jiffies;
 
-	return flow4->relay_number;
+	return flow4->relay_index;
 }
 
 
@@ -861,19 +902,13 @@ static struct relay_addr *
 lookup_relay_addr_from_tuple_flowbase (struct sk_buff * skb,
 				       struct relay_tuple * tuple)
 {
-	u32 hash;
-	struct relay_addr * relay = NULL;
+	u8 idx;
 
-	hash = ipv4_flow_classify (skb, tuple);
-	if (!hash)
+	idx = ipv4_flow_classify (skb, tuple);
+	if (idx == 0)
 		return NULL;
 
-	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
-		if (--hash == 0)
-			break;
-	}
-
-	return relay;
+	return tuple->relay_table[idx];
 }
 
 static unsigned int
@@ -1106,6 +1141,7 @@ static struct nla_policy iplb_nl_policy[IPLB_ATTR_MAX + 1] = {
 	[IPLB_ATTR_RELAY4]		= { .type = NLA_U32, },
 	[IPLB_ATTR_RELAY6]		= { .type = NLA_BINARY,
 					    .len = sizeof (struct in6_addr), },
+	[IPLB_ATTR_RELAY_INDEX]		= { .type = NLA_U8,},
 	[IPLB_ATTR_WEIGHT]      	= { .type = NLA_U8, },
 	[IPLB_ATTR_ENCAP_TYPE]		= { .type = NLA_U8, },
 	[IPLB_ATTR_SRC4]		= { .type = NLA_U32, },
@@ -1412,6 +1448,11 @@ iplb_nl_cmd_relay4_delete (struct sk_buff * skb, struct genl_info * info)
 
 	delete_relay_addr_from_tuple (tuple, AF_INET, &addr);
 
+	if (tuple->relay_count == 0) {
+		delete_relay_tuple (&iplb_net->rtable4,
+				    AF_INET, &prefix, length);
+	}
+
 	return 0;
 }
 
@@ -1449,6 +1490,11 @@ iplb_nl_cmd_relay6_delete (struct sk_buff * skb, struct genl_info * info)
 		return -ENOENT;
 
 	delete_relay_addr_from_tuple (tuple, AF_INET6, &addr);
+
+	if (tuple->relay_count == 0) {
+		delete_relay_tuple (&iplb_net->rtable6,
+				    AF_INET6, &prefix, length);
+	}
 
 	return 0;
 }
@@ -1538,7 +1584,8 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	    nla_put_u8 (skb, IPLB_ATTR_WEIGHT, relay->weight) ||
 	    nla_put_u8 (skb, IPLB_ATTR_ENCAP_TYPE, relay->encap_type) ||
 	    nla_put (skb, IPLB_ATTR_STATS, sizeof (struct relay_addr),
-		     &relay->stats))
+		     &relay->stats) ||
+	    nla_put_u8 (skb, IPLB_ATTR_RELAY_INDEX, relay->index))
 		goto error_out;
 
 	return genlmsg_end (skb, hdr);
@@ -1917,7 +1964,7 @@ iplb_nl_flow4_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	info.dport = flow4->dport;
 	info.pkt_count = flow4->pkt_count;
 	info.byte_count = flow4->byte_count;
-	info.relay_number = flow4->relay_number;
+	info.relay_index = flow4->relay_index;
 	
 	if (nla_put (skb, IPLB_ATTR_FLOW4, sizeof (struct iplb_flow4_info),
 		    &info))
@@ -1994,49 +2041,49 @@ static struct genl_ops iplb_nl_ops[] = {
 		.cmd	= IPLB_CMD_PREFIX4_ADD,
 		.doit	= iplb_nl_cmd_prefix4_add,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_PREFIX6_ADD,
 		.doit	= iplb_nl_cmd_prefix6_add,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_PREFIX4_DELETE,
 		.doit	= iplb_nl_cmd_prefix4_delete,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_PREFIX6_DELETE,
 		.doit	= iplb_nl_cmd_prefix6_delete,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_RELAY4_ADD,
 		.doit	= iplb_nl_cmd_relay4_add,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_RELAY6_ADD,
 		.doit	= iplb_nl_cmd_relay6_add,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_RELAY4_DELETE,
 		.doit	= iplb_nl_cmd_relay4_delete,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_RELAY6_DELETE,
 		.doit	= iplb_nl_cmd_relay6_delete,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_PREFIX4_GET,
@@ -2054,19 +2101,19 @@ static struct genl_ops iplb_nl_ops[] = {
 		.cmd	= IPLB_CMD_WEIGHT_SET,
 		.doit	= iplb_nl_cmd_weight_set,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_SRC4_SET,
 		.doit	= iplb_nl_cmd_src4_set,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_SRC6_SET,
 		.doit	= iplb_nl_cmd_src6_set,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_SRC4_GET,
@@ -2087,19 +2134,19 @@ static struct genl_ops iplb_nl_ops[] = {
 		.cmd	= IPLB_CMD_LOOKUP_WEIGHTBASE,
 		.doit	= iplb_nl_cmd_lookup_weightbase,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_LOOKUP_HASHBASE,
 		.doit	= iplb_nl_cmd_lookup_hashbase,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 	{
 		.cmd	= IPLB_CMD_LOOKUP_FLOWBASE,
 		.doit	= iplb_nl_cmd_lookup_flowbase,
 		.policy	= iplb_nl_policy,
-		.flags	= GENL_ADMIN_PERM,
+//		.flags	= GENL_ADMIN_PERM,
 	},
 };
 
@@ -2131,7 +2178,7 @@ __init iplb_init_module (void)
 	init_timer_deferrable (&iplb_age_timer);
 	iplb_age_timer.function = cleanup_flow;
 	iplb_age_timer.data = 0;
-	mod_timer (&iplb_age_timer, jiffies + FLOW_AGE_INTERVAL);
+	//mod_timer (&iplb_age_timer, jiffies + FLOW_AGE_INTERVAL);
 
 	printk (KERN_INFO "iplb (%s) is loaded\n", IPLB_VERSION);
 

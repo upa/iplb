@@ -194,7 +194,7 @@ usage (void)
 		 "\n"
 		 "       ip lb set tunnel src [ ADDRESS ]\n"
 		 "\n"
-		 "       ip lb show { tunnel | counter }\n"
+		 "       ip lb show { detail | flow }\n"
 		 "\n"
 		);
 
@@ -571,8 +571,8 @@ static int
 prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 {
 	int len, ai_family = 0, prefix_family = 0, relay_family = 0;
-	int stats_flag = 0;
-	__u8 weight, length, encap_type;
+	int detail_flag = 0;
+	__u8 weight, length, encap_type = 0, index;
 	char addr[16], addrbuf1[64], addrbuf2[64];
 	struct genlmsghdr * ghdr;
 	struct rtattr * attrs[IPLB_ATTR_MAX + 1];
@@ -582,8 +582,8 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 		"gre", "ipip", "lsrr"
 	};
 
-	if (arg != NULL && strncmp (arg, "counter", 7) == 0) {
-		stats_flag = 1;
+	if (arg != NULL && strncmp (arg, "detail", 7) == 0) {
+		detail_flag = 1;
 	}
 
 	memset (addr, 0, sizeof (addr));
@@ -668,7 +668,15 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 	}
 
 
-	if (!stats_flag) {
+	if (attrs[IPLB_ATTR_RELAY_INDEX]) {
+		index = rta_getattr_u8 (attrs[IPLB_ATTR_RELAY_INDEX]);
+	} else {
+		fprintf (stderr, "%s: relay index does not exist\n",
+			 __func__);
+		return -1;
+	}
+
+	if (!detail_flag) {
 		if (relay_family) {
 			fprintf (stdout,
 				 "prefix %s/%d relay %s weight %d type %s\n",
@@ -682,10 +690,11 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 		if (relay_family) {
 			fprintf (stdout,
 				 "prefix %s/%d relay %s weight %d type %s "
-				 "txpkt %u txbyte %u\n",
+				 "txpkt %u txbyte %u index %u\n",
 				 addrbuf1, length, addrbuf2, weight,
 				 encap_type_name[encap_type],
-				 stats.pkt_count, stats.byte_count);
+				 stats.pkt_count, stats.byte_count,
+				 index);
 		}
 	}
 
@@ -749,12 +758,106 @@ do_show_tunnel (void)
 		      cmd, NLM_F_REQUEST | NLM_F_ACK);
 
 	if ((ret = rtnl_send (&genl_rth, &req.n, req.n.nlmsg_len)) < 0) {
-		fprintf (stderr, "%s: rtnl_senf failed \"%d\"\n",
+		fprintf (stderr, "%s: rtnl_send failed \"%d\"\n",
 			 __func__, ret);
 		return ret;
 	}
 
 	if (rtnl_dump_filter (&genl_rth, tunnel_nlmsg, NULL) < 0) {
+		fprintf (stderr, "Dump terminated\n");
+		exit (1);
+	}
+
+	return 0;
+}
+
+static int
+flow4_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
+{
+	int len;
+	char proto[16], srcaddr[16], dstaddr[16];
+	struct iplb_flow4_info * info;
+	struct genlmsghdr * ghdr;
+	struct rtattr * attrs[IPLB_ATTR_MAX + 1];
+
+	memset (srcaddr, 0, sizeof (srcaddr));
+	memset (dstaddr, 0, sizeof (dstaddr));
+
+	if (n->nlmsg_type == NLMSG_ERROR) {
+		fprintf (stderr, "%s: nlmsg_error\n", __func__);
+		return -EBADMSG;
+	}
+
+	ghdr = NLMSG_DATA (n);
+	len = n->nlmsg_len - NLMSG_LENGTH (sizeof (*ghdr));
+	if (len < 0) {
+		fprintf (stderr, "%s: nlmsg length error\n", __func__);
+		return -EBADMSG;
+	}
+
+	parse_rtattr (attrs, IPLB_ATTR_MAX, (void *) ghdr + GENL_HDRLEN, len);
+
+	if (attrs[IPLB_ATTR_FLOW4]) {
+		info = RTA_DATA (attrs[IPLB_ATTR_FLOW4]);
+	} else {
+		fprintf (stderr, "%s: flow4 does not exist\n", __func__);
+		return -1;
+	}
+
+	switch (info->protocol) {
+	case IPPROTO_TCP :
+		snprintf (proto, sizeof (proto), "%s", "tcp");
+		break;
+	case IPPROTO_UDP :
+		snprintf (proto, sizeof (proto), "%s", "udp");
+		break;
+	case IPPROTO_ICMP :
+		snprintf (proto, sizeof (proto), "%s", "icmp");
+		break;
+	default :
+		snprintf (proto, sizeof (proto), "%d", info->protocol);
+	}
+
+	inet_ntop (AF_INET, &info->saddr, srcaddr, sizeof (srcaddr));
+	inet_ntop (AF_INET, &info->daddr, dstaddr, sizeof (dstaddr));
+
+	printf ("%s %s:%u->%s:%u txpkt %u txbytes %u index %u\n", proto,
+		srcaddr, ntohs (info->sport),
+		dstaddr, ntohs (info->dport),
+		info->pkt_count, info->byte_count,
+		info->relay_index);
+
+	return 0;
+}
+
+static int
+do_show_flow (void)
+{
+	int ret, cmd;
+
+	switch (preferred_family) {
+	case AF_UNSPEC :
+	case AF_INET :
+		cmd = IPLB_CMD_FLOW4_GET;
+		break;
+	case AF_INET6 :
+		/* flow6_get will be implemented here */
+	default :
+		fprintf (stderr, "%s: invalid family \"%d\"\n",
+			 __func__, cmd);
+		return -1;
+	}
+
+	GENL_REQUEST (req, 1024, genl_family, 0, IPLB_GENL_VERSION,
+		      cmd, NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST);
+
+	if ((ret = rtnl_send (&genl_rth, &req.n, req.n.nlmsg_len)) < 0) {
+		fprintf (stderr, "%s: rtnl_send failed \"%d\"\n",
+			 __func__, ret);
+		return ret;
+	}
+
+	if (rtnl_dump_filter (&genl_rth, flow4_nlmsg, NULL) < 0) {
 		fprintf (stderr, "Dump terminated\n");
 		exit (1);
 	}
@@ -769,6 +872,10 @@ do_show (int argc, char ** argv)
 
 	if (*argv && strcmp (*argv, "tunnel") == 0) {
 		return do_show_tunnel ();
+	}
+
+	if (*argv && strcmp (*argv, "flow") == 0) {
+		return do_show_flow ();
 	}
 
 	switch (preferred_family) {
