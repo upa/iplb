@@ -1,4 +1,3 @@
-
 /*
  * IP-in-IP based Load Balancing
  */
@@ -54,9 +53,10 @@ MODULE_AUTHOR ("upa@haeena.net");
 #define IPV4_IPIP_HEADROOM	(20 + 14)
 #define IPV6_IPIP_HEADROOM	(40 + 14)
 
-#define FLOW_HASH_BITS		8
-#define FLOW_AGE_LIFETIME	(60 * HZ)
-#define FLOW_AGE_INTERVAL	(10 * HZ)
+#define FLOW_HASH_BITS			8
+#define FLOW_LIFETIME			(60 * HZ)
+#define FLOW_CLASSIFIER_INTERVAL	(1 * HZ)
+
 
 #define ADDR4COPY(s, d) *(((u32 *)(d))) = *(((u32 *)(s)))
 #define ADDR6COPY(s, d) do {					\
@@ -74,11 +74,19 @@ MODULE_AUTHOR ("upa@haeena.net");
 	 *(((u32 *)(d)) + 3) == *(((u32 *)(s)) + 3))		 \
 
 
+#define IPLB_STATS_BPS(s) ((s)[2].byte_count - (s)[1].byte_count)
+#define IPLB_STATS_PPS(s) ((s)[2].packet_count - (s)[1].packet_count)
+
 #define IPTRANSPORTHDR(ip) (((char *)(ip)) + ((ip)->ihl << 2))
 
 
 static unsigned int iplb_net_id;
 static u32 iplb_salt __read_mostly;
+
+
+/* enable/disable periodical flow classifer. */
+static bool is_iplb_flow_classifier __read_mostly;
+
 
 
 /* routing table */
@@ -112,7 +120,7 @@ struct relay_addr {
 	struct rcu_head		rcu;
 
 	struct relay_tuple 	* tuple;	/* parent */
-	struct iplb_stats	stats;
+	struct iplb_stats	stats[3]; /* 0 is newest. updated every AGE */
 
 	u8			family;
 	u8			weight;
@@ -131,6 +139,7 @@ struct relay_addr {
 #define RELAY_TABLE_SIZE	64
 #define RELAY_TABLE_MAX		63	/* idx 0 means Native Forwaridng */
 
+
 struct relay_tuple {
 	struct list_head	list;		/* private */
 
@@ -141,6 +150,9 @@ struct relay_tuple {
 
 	struct relay_addr	* relay_table[RELAY_TABLE_SIZE];
 	struct list_head	relay_list;	/* list of relay_addr */
+
+	/* used by flow_classifier only. Do not touch !! */
+	void * tuple_class;
 };
 
 
@@ -158,8 +170,9 @@ struct iplb_flow4 {
 
 	struct iplb_stats	stats[3]; /* 0 is newest. updated every AGE */
 
-	u8	relay_index;	/* the place of relay on relay_list */
+	u8	relay_index;	/* the place of relay on relay_table */
 	/*
+	 * this idnex is used by flowbase forwarding.
 	 * if tuple->relay_table[relay_index] is NULL,
 	 * relay_index is changed to 0. 0 means "Native forwarding".
 	 */
@@ -168,7 +181,7 @@ struct iplb_flow4 {
 
 /* XXX: hashtable for flow should be declared in netns structure. */
 static DEFINE_HASHTABLE (flow4_table, FLOW_HASH_BITS);
-static struct timer_list iplb_age_timer;
+static struct timer_list iplb_flow_classifier_timer;
 
 
 /* Per network namespace structure */
@@ -187,12 +200,6 @@ struct iplb_net {
 	struct iplb_rtable	rtable6;
 };
 
-
-
-/* prototype for cleanup_flow */
-static struct relay_addr *
-lookup_relay_addr_from_tuple_flowbase (struct sk_buff * skb,
-				       struct relay_tuple * tuple);
 
 
 /********************************
@@ -409,8 +416,12 @@ add_relay_addr_to_tuple (struct relay_tuple * tuple,
 	relay->family	= af;
 	relay->weight	= weight;
 	relay->encap_type	= encap_type;
-	relay->stats.pkt_count	= 0;
-	relay->stats.byte_count = 0;
+	relay->stats[0].pkt_count  = 0;
+	relay->stats[0].byte_count = 0;
+	relay->stats[1].pkt_count  = 0;
+	relay->stats[1].byte_count = 0;
+	relay->stats[2].pkt_count  = 0;
+	relay->stats[2].byte_count = 0;
 
 	switch (af) {
 	case (AF_INET) :
@@ -484,8 +495,8 @@ delete_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af, void * addr)
 static void
 update_iplb_stats (struct relay_addr * relay, struct sk_buff * skb)
 {
-	relay->stats.pkt_count++;
-	relay->stats.byte_count += skb->len;
+	relay->stats[0].pkt_count++;
+	relay->stats[0].byte_count += skb->len;
 
 	return;
 }
@@ -505,6 +516,23 @@ find_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af, void * addr)
 	return NULL;
 }
 
+static struct relay_addr *
+find_smallest_relay_addr_from_tuple (struct relay_tuple * tuple)
+{
+	__u32 bps = 0xFFFFFFFF;
+	struct relay_addr * relay, * smallest;
+
+	smallest = NULL;
+
+	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
+		if (IPLB_STATS_BPS (relay->stats) < bps) {
+			bps = IPLB_STATS_BPS (relay->stats);
+			smallest = relay;
+		}
+	}
+
+	return smallest;
+}
 
 static void
 patricia_destroy_relay_tuple (void * data)
@@ -567,22 +595,17 @@ create_flow4 (u8 proto, __be32 saddr, __be32 daddr, u16 sport, u16 dport,
 	return flow4;
 }
 
-static void
-cleanup_flow (unsigned long arg)
+static inline void
+_cleanup_flow (unsigned long arg)
 {
 	int n;
 	struct iplb_flow4 * flow4;
 	struct hlist_node * tmp;
-	struct iplb_net   * iplb_net = (struct iplb_net *) arg;
 	unsigned long timeout;
-	unsigned long next_timer = jiffies + FLOW_AGE_INTERVAL;
-
-	if (iplb_net->lookup_fn != lookup_relay_addr_from_tuple_flowbase)
-		return;
 
 	hash_for_each_safe (flow4_table, n, tmp, flow4, hash) {
 
-		timeout = flow4->updated + FLOW_AGE_LIFETIME;
+		timeout = flow4->updated + FLOW_LIFETIME;
 
 		if (time_before_eq (timeout, jiffies)) {
 			hash_del_rcu (&flow4->hash);
@@ -594,7 +617,162 @@ cleanup_flow (unsigned long arg)
 		flow4->stats[1] = flow4->stats[0];
 	}
 
-	mod_timer (&iplb_age_timer, next_timer);
+	return;
+}
+
+static inline void
+_update_relay_counter (unsigned long arg)
+{
+	struct relay_addr	* relay;
+	struct relay_tuple	* tuple;
+	struct iplb_net		* iplb_net = (struct iplb_net *) arg;
+	struct iplb_rtable	* rtable = &iplb_net->rtable4;
+
+	list_for_each_entry_rcu (tuple, &rtable->rlist, list) {
+		list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
+			/* push back packet counters */
+			relay->stats[2] = relay->stats[1];
+			relay->stats[1] = relay->stats[0];
+		}
+	}
+
+	return;
+}
+
+static void
+_iplb_flow_classifier (unsigned long arg)
+{
+	/*
+	 * Original Algorithm is described in
+	 * "A Scalable, Commodity Data Center Network Architecture",
+	 * Mohammad Al-Fares et.al. SIGCOMM'08.
+	 */
+
+	int n = 0;
+	__u32  max, min;
+	struct relay_addr	* relay;
+	struct relay_tuple	* tuple;
+	struct iplb_flow4	* flow4;
+	struct iplb_net		* iplb_net = (struct iplb_net *) arg;
+	struct iplb_rtable	* rtable = &iplb_net->rtable4;
+
+
+	/* XXX: max number of tuples is 16 !! hidoi !! FIXME !!!!! */
+	struct tuple_classifier {
+		__u32 d;	/* Rmax - Rmin */
+		__u32 bps;	/* bps of largest flow */
+		struct relay_tuple * tuple;
+		struct relay_addr * rmax, * rmin;
+		struct iplb_flow4 * flow4;
+	} tuple_class[16] = { [0 ... 15 ] = { 0, 0, NULL, NULL, NULL, NULL, }};
+	struct tuple_classifier * tc;
+
+	/*
+	 * At first,
+	 * pickup all tuple and smallest and largest relay of each tuple
+	 * to tuple_classifier list.
+	 */
+	list_for_each_entry_rcu (tuple, &rtable->rlist, list) {
+		max = 0;
+		min = 0xFFFFFFFF;
+		tuple_class[n].tuple = tuple;
+		list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
+			if (IPLB_STATS_BPS (relay->stats) >= max) {
+				max = IPLB_STATS_BPS (relay->stats);
+				tuple_class[n].rmax = relay;
+			}
+			if (IPLB_STATS_BPS (relay->stats) <= min) {
+				min = IPLB_STATS_BPS (relay->stats);
+				tuple_class[n].rmin = relay;
+			}
+		}
+		if (unlikely (min > max)) {
+			pr_debug (IPLB_NAME ":%s: min max failed\n", __func__);
+			goto tuple_next;
+		}
+		tuple_class[n].d = max - min;
+		tuple->tuple_class = &tuple_class[n];
+	tuple_next:
+		n++;
+		if (n == 16) {
+			pr_debug (IPLB_NAME ":%s: sorry, max num of "
+				"tuple is 16...", __func__);
+			return;
+		}
+	}
+
+	/*
+	 * Finding the largest flow assigned to Rmax and smaller than D.
+	 * This flow is stored to tuple_class[n].flow4.
+	 */
+	hash_for_each_rcu (flow4_table, n, flow4, hash) {
+
+		tuple = find_relay_tuple (rtable, AF_INET, &flow4->daddr, 32);
+		if (!tuple || tuple->tuple_class == NULL) {
+			pr_debug (IPLB_NAME ":%s: find relay tuple for"
+				"flow failed !!\n", __func__);
+			continue;
+		}
+
+		tc = (struct tuple_classifier *) tuple->tuple_class;
+		if (tc == NULL) {
+			pr_debug (IPLB_NAME ":%s: tc is null!!\n",
+				__func__);
+			continue;
+		}
+
+		if (tc->flow4 == NULL) {
+			tc->flow4 = flow4;
+			continue;
+		}
+
+		/* check, is it larger than tc->flow4 and smaller than D ? */
+		if (IPLB_STATS_BPS (flow4->stats) <
+		    IPLB_STATS_BPS (tc->flow4->stats) &&
+		    IPLB_STATS_BPS (flow4->stats) < tc->d) {
+			tc->flow4 = flow4;
+		}
+	}
+
+	/*
+	 * Reassign tuple_class[n].flow4 to Rmin.
+	 */
+	for (n = 0; n < 64 && tuple_class[n].tuple != NULL; n++) {
+		if (tuple_class[n].flow4 == NULL) {
+			pr_debug (IPLB_NAME ":%s: flow4 is null!!\n",
+				  __func__);
+			continue;
+		}
+		if (tuple_class[n].rmin == NULL) {
+			pr_debug (IPLB_NAME ":%s: rmin is null!!\n",
+				__func__);
+			continue;
+		}
+		tuple_class[n].flow4->relay_index = tuple_class[n].rmin->index;
+	}
+
+	return;
+}
+
+static void
+iplb_flow_classifier (unsigned long arg)
+{
+	int n;
+	unsigned long		next_timer;
+
+	if (!is_iplb_flow_classifier)
+		return;
+
+	_cleanup_flow (arg);
+	_update_relay_counter (arg);
+
+	for (n = 0; n < 3; n++) {
+		_iplb_flow_classifier (arg);
+	}
+
+	/* XXX: I think, flow classifier can no be done on 1 sec... */
+	next_timer = jiffies + FLOW_CLASSIFIER_INTERVAL;
+	mod_timer (&iplb_flow_classifier_timer, next_timer);
 
 	return;
 }
@@ -809,6 +987,7 @@ static inline u8
 ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 {
 	u16	sport, dport;
+	struct relay_addr * relay;
 	struct iplb_flow4 * flow4;
 	struct iphdr 	* ip;
 	struct tcphdr	* tcp;
@@ -853,6 +1032,17 @@ ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 
 	if (tuple->relay_table[flow4->relay_index] == NULL) {
 		flow4->relay_index = 0;
+	}
+
+	/* Flow Classifier for incommaing packet. */
+	if (flow4->relay_index == 0) {
+		relay = find_smallest_relay_addr_from_tuple (tuple);
+		if (relay == NULL) {
+			printk (KERN_ERR IPLB_NAME
+				":%s: find_small_relay_addr failed\n",
+				__func__);
+		}
+		flow4->relay_index = relay->index;
 	}
 
 	flow4->stats[0].pkt_count  += 1;
@@ -1113,10 +1303,11 @@ iplb_init_net (struct net * net)
 	INIT_IPLB_RTABLE (&iplb_net->rtable4, 32);
 	INIT_IPLB_RTABLE (&iplb_net->rtable6, 64);
 
-	/* init timer for aging flow tuple  */
-	init_timer_deferrable (&iplb_age_timer);
-	iplb_age_timer.function = cleanup_flow;
-	iplb_age_timer.data = (unsigned long) iplb_net;
+
+	/* timer for flow is enbled when lookup_fun is set to flowbase */
+	init_timer_deferrable (&iplb_flow_classifier_timer);
+	iplb_flow_classifier_timer.function = iplb_flow_classifier;
+	iplb_flow_classifier_timer.data = (unsigned long) iplb_net;
 
 	return 0;
 };
@@ -1127,7 +1318,7 @@ iplb_exit_net (struct net * net)
 {
 	struct iplb_net * iplb_net = net_generic (net, iplb_net_id);
 
-	del_timer_sync (&iplb_age_timer);
+	del_timer_sync (&iplb_flow_classifier_timer);
 
 	DESTROY_IPLB_RTABLE (&iplb_net->rtable4);
 	DESTROY_IPLB_RTABLE (&iplb_net->rtable6);
@@ -1608,7 +1799,7 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	    nla_put_u8 (skb, IPLB_ATTR_WEIGHT, relay->weight) ||
 	    nla_put_u8 (skb, IPLB_ATTR_ENCAP_TYPE, relay->encap_type) ||
 	    nla_put (skb, IPLB_ATTR_STATS, sizeof (struct relay_addr),
-		     &relay->stats) ||
+		     &relay->stats[0]) ||
 	    nla_put_u8 (skb, IPLB_ATTR_RELAY_INDEX, relay->index))
 		goto error_out;
 
@@ -2090,13 +2281,17 @@ iplb_nl_cmd_lookup_flowbase (struct sk_buff * skb, struct genl_info * info)
 
 	iplb_net->lookup_fn = lookup_relay_addr_from_tuple_flowbase;
 
-	/* start aging thread */
-	mod_timer (&iplb_age_timer, jiffies + FLOW_AGE_INTERVAL);
+	/* start flow classifier */
+	is_iplb_flow_classifier = true;
+	mod_timer (&iplb_flow_classifier_timer,
+		   jiffies + FLOW_CLASSIFIER_INTERVAL);
 
 	printk (KERN_INFO "iplb: set lookup function \"flowbase\"\n");
 
 	return 0;
 }
+
+
 
 static struct genl_ops iplb_nl_ops[] = {
 	{
@@ -2240,6 +2435,8 @@ __init iplb_init_module (void)
 	rc = nf_register_hooks (nf_iplb_ops, ARRAY_SIZE (nf_iplb_ops));
 	if (rc < 0)
 		goto nf_err;
+
+	is_iplb_flow_classifier = false;
 
 	printk (KERN_INFO "iplb (%s) is loaded\n", IPLB_VERSION);
 
