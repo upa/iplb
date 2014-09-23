@@ -65,13 +65,13 @@ wrapsum(u_int32_t sum)
 int
 main (int argc, char ** argv)
 {
-	int rc, sock, on = 1, len, port;
+	int rc, sock, on = 1, len, port, fnum;
 	char pkt[8192];
 	struct sockaddr_in saddr_in;
 	struct in_addr dst_addr, src_addr;
 
-	if (argc < 4) {
-		printf ("%s [SRCADDR] [DSTADDR] [LEN]\n", argv[0]);
+	if (argc < 5) {
+		printf ("%s [SRCADDR] [DSTADDR] [LEN] [FLOWNUM]\n", argv[0]);
 		return -1;
 	}
 
@@ -81,6 +81,7 @@ main (int argc, char ** argv)
 	inet_pton (AF_INET, argv[1], &src_addr);
 	inet_pton (AF_INET, argv[2], &dst_addr);
 	len = atoi (argv[3]);
+	fnum = atoi (argv[4]);
 
 	/* create raw socket */
 	if ((sock = socket (AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0)
@@ -122,7 +123,9 @@ main (int argc, char ** argv)
 	saddr_in.sin_family = AF_INET;
 
 	while (1) {
-		for (port = SRCPORTRANGEMIN; port < SRCPORTRANGEMAX;
+		for (port = SRCPORTRANGEMIN;
+		     port < SRCPORTRANGEMIN + fnum &&
+		     port < SRCPORTRANGEMAX;
 		     udp->uh_sport = htons (port++)) {
 			rc = sendto (sock, pkt, len, 0,
 				     (struct sockaddr *) &saddr_in,

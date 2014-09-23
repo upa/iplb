@@ -721,13 +721,15 @@ _iplb_flow_classifier (unsigned long arg)
 			continue;
 		}
 
-		if (tc->flow4 == NULL) {
+		if (tc->flow4 == NULL &&
+		    IPLB_STATS_BPS (flow4->stats) < tc->d) {
 			tc->flow4 = flow4;
 			continue;
 		}
 
 		/* check, is it larger than tc->flow4 and smaller than D ? */
-		if (IPLB_STATS_BPS (flow4->stats) <
+		if (tc->flow4 != NULL &&
+		    IPLB_STATS_BPS (flow4->stats) >
 		    IPLB_STATS_BPS (tc->flow4->stats) &&
 		    IPLB_STATS_BPS (flow4->stats) < tc->d) {
 			tc->flow4 = flow4;
@@ -739,8 +741,6 @@ _iplb_flow_classifier (unsigned long arg)
 	 */
 	for (n = 0; n < 64 && tuple_class[n].tuple != NULL; n++) {
 		if (tuple_class[n].flow4 == NULL) {
-			pr_debug (IPLB_NAME ":%s: flow4 is null!!\n",
-				  __func__);
 			continue;
 		}
 		if (tuple_class[n].rmin == NULL) {
@@ -1151,7 +1151,8 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 	ipv4_set_encap_func[relay->encap_type] (skb, relay, iplb_net);
 	update_iplb_stats (relay, skb);
 
-	return NF_ACCEPT;
+	//return NF_ACCEPT;
+	return  NF_DROP;
 }
 
 
