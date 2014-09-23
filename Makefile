@@ -20,4 +20,6 @@ clean:
 	rm -f *.ko
 	rm -f *.mod.c
 	rm -f *~
+	rm modules.order
+	rm Module.symvers
 	rm patricia/patricia.o
