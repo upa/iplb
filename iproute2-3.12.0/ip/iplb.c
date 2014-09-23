@@ -950,10 +950,10 @@ flow4_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 		float pps, bps;
 
 		pps = (float)(info->stats[1].pkt_count -
-			      info->stats[2].pkt_count) / 10;
+			      info->stats[2].pkt_count);
 
 		bps = (float)(info->stats[1].byte_count -
-			      info->stats[2].byte_count) / 10 * 8;
+			      info->stats[2].byte_count) * 8;
 
 		printf ("%s %s:%u->%s:%u index %u "
 			"%.2fpps %.2fbps\n",
