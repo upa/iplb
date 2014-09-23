@@ -178,19 +178,24 @@ struct iplb_flow4 {
  */
 
 /* tunnel source address (not used for routing) */
-__be32		tunnel_src __read_mostly;	/* default 10.0.0.1	*/
-struct in6_addr	tunnel_src6 __read_mostly;	/* default 2001:db8::1	*/
+static __be32 tunnel_src __read_mostly;		/* default 10.0.0.1	*/
+static __be32 tunnel_src6[4] __read_mostly;	/* default 2001:db8::1	*/
 
 /* lookup function for relay_addr from tuple. */
-struct relay_addr * (* lookup_fn) (struct sk_buff *, struct relay_tuple *);
+static struct relay_addr *
+(* lookup_fn)(struct sk_buff *, struct relay_tuple *);
 
 /* routing tables for IPv4 and IPv6 */
-struct iplb_rtable	rtable4;
-struct iplb_rtable	rtable6;
+static struct iplb_rtable	rtable4;
+static struct iplb_rtable	rtable6;
 
 static DEFINE_HASHTABLE (flow4_table, FLOW_HASH_BITS);
 static struct timer_list iplb_flow_classifier_timer;
 
+
+
+
+/* a prototype for flow_classifier */
 static struct relay_addr *
 lookup_relay_addr_from_tuple_flowbase (struct sk_buff *, struct relay_tuple *);
 
@@ -1226,7 +1231,7 @@ ipv6_set_ip6ip6_encap (struct sk_buff * skb, struct relay_addr * relay)
 					 sizeof (struct ipv6hdr));
 	ip6ip6h->nexthdr	= IPPROTO_IPV6;
 	ip6ip6h->hop_limit	= 16;
-	ADDR6COPY (&tunnel_src6, &ip6ip6h->saddr);
+	ADDR6COPY (tunnel_src6, &ip6ip6h->saddr);
 	ADDR6COPY (relay->relay_ip6, &ip6ip6h->daddr);
 	
 	return;
@@ -1968,18 +1973,15 @@ iplb_nl_cmd_src4_set (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_src6_set (struct sk_buff * skb, struct genl_info * info)
 {
-	struct in6_addr src6;
-
 	if (!info->attrs[IPLB_ATTR_SRC6]) {
 		pr_debug ("%s: address is not specified\n", __func__);
 		return -EINVAL;
 	}
 
-	nla_memcpy (&src6, info->attrs[IPLB_ATTR_SRC6], sizeof (src6));
+	nla_memcpy (tunnel_src6, info->attrs[IPLB_ATTR_SRC6],
+		    sizeof (struct in6_addr));
 
-	tunnel_src6 = src6;
-
-	pr_debug ("%s: set tunnel src %pI6\n", __func__, &tunnel_src6);
+	pr_debug ("%s: set tunnel src %pI6\n", __func__, tunnel_src6);
 
 	return 0;
 }
@@ -2032,7 +2034,7 @@ iplb_nl_cmd_src6_get (struct sk_buff * skb, struct genl_info * info)
 		return -EMSGSIZE;
 
 	if (nla_put (skb, IPLB_ATTR_SRC6, sizeof (struct in6_addr),
-		     &tunnel_src6)) {
+		     tunnel_src6)) {
 		genlmsg_cancel (msg, hdr);
 		return -EINVAL;
 	}
@@ -2305,10 +2307,10 @@ __init iplb_init_module (void)
 	tunnel_src = 0x0100000A;
 
 	/* tunnel_src6 = 2001:db8::1 */
-	tunnel_src6.in6_u.u6_addr32[0] = 0xb80d0120;
-	tunnel_src6.in6_u.u6_addr32[1] = 0x00000000;
-	tunnel_src6.in6_u.u6_addr32[2] = 0x00000000;
-	tunnel_src6.in6_u.u6_addr32[3] = 0x01000000;
+	tunnel_src6[0] = 0xb80d0120;
+	tunnel_src6[1] = 0x00000000;
+	tunnel_src6[2] = 0x00000000;
+	tunnel_src6[3] = 0x01000000;
 
 	lookup_fn = lookup_relay_addr_from_tuple_weightbase;
 	INIT_IPLB_RTABLE (&rtable4, 32);
