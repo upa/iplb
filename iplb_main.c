@@ -191,8 +191,10 @@ struct iplb_rtable	rtable6;
 static DEFINE_HASHTABLE (flow4_table, FLOW_HASH_BITS);
 static struct timer_list iplb_flow_classifier_timer;
 
-/* enable/disable periodical flow classifer. */
-static bool is_iplb_flow_classifier __read_mostly;
+static struct relay_addr *
+lookup_relay_addr_from_tuple_flowbase (struct sk_buff *, struct relay_tuple *);
+
+
 
 
 /********************************
@@ -645,7 +647,7 @@ _iplb_flow_classifier (unsigned long arg)
 	 * Mohammad Al-Fares et.al. SIGCOMM'08.
 	 */
 
-	int n = 0;
+	int n = 0, i;
 	__u32  max, min;
 	struct relay_addr	* relay;
 	struct relay_tuple	* tuple;
@@ -653,7 +655,7 @@ _iplb_flow_classifier (unsigned long arg)
 	struct iplb_rtable	* rtable = &rtable4;
 
 
-	/* XXX: max number of tuples is 16 !! hidoi !! FIXME !!!!! */
+	/* XXX: Max number of tuples is 16 !! Terrible !! FIXME !!!!! */
 	struct tuple_classifier {
 		__u32 d;	/* Rmax - Rmin */
 		__u32 bps;	/* bps of largest flow */
@@ -702,47 +704,55 @@ _iplb_flow_classifier (unsigned long arg)
 	 * Finding the largest flow assigned to Rmax and smaller than D.
 	 * This flow is stored to tuple_class[n].flow4.
 	 */
-	hash_for_each_rcu (flow4_table, n, flow4, hash) {
+	for (i = 0; i < 1; i++) {
+		hash_for_each_rcu (flow4_table, n, flow4, hash) {
 
-		tuple = find_relay_tuple (rtable, AF_INET, &flow4->daddr, 32);
-		if (!tuple || tuple->tuple_class == NULL) {
-			pr_debug (IPLB_NAME ":%s: find relay tuple for"
-				"flow failed !!\n", __func__);
-			continue;
-		}
-		tc = (struct tuple_classifier *) tuple->tuple_class;
+			tuple = find_relay_tuple (rtable, AF_INET,
+						  &flow4->daddr, 32);
+			if (!tuple || tuple->tuple_class == NULL) {
+				pr_debug (IPLB_NAME ":%s: find relay tuple for"
+					  "flow failed !!\n", __func__);
+				continue;
+			}
+			tc = (struct tuple_classifier *) tuple->tuple_class;
 
-		if (tc->rmax->index != flow4->relay_index)
-			continue;
+			if (tc->rmax->index != flow4->relay_index)
+				continue;
 
-		if (tc->flow4 == NULL &&
-		    IPLB_STATS_BPS (flow4->stats) < tc->d) {
-			tc->flow4 = flow4;
-			continue;
+			if (tc->flow4 == NULL &&
+			    IPLB_STATS_BPS (flow4->stats) < tc->d) {
+				tc->flow4 = flow4;
+				continue;
+			}
+
+			/* check, is it larger than tc->flow4
+			   and smaller than D ? */
+			if (tc->flow4 != NULL &&
+			    IPLB_STATS_BPS (flow4->stats) >
+			    IPLB_STATS_BPS (tc->flow4->stats) &&
+			    IPLB_STATS_BPS (flow4->stats) < tc->d) {
+				tc->flow4 = flow4;
+			}
 		}
 
-		/* check, is it larger than tc->flow4 and smaller than D ? */
-		if (tc->flow4 != NULL &&
-		    IPLB_STATS_BPS (flow4->stats) >
-		    IPLB_STATS_BPS (tc->flow4->stats) &&
-		    IPLB_STATS_BPS (flow4->stats) < tc->d) {
-			tc->flow4 = flow4;
+		/*
+		 * Reassign tuple_class[n].flow4 to Rmin.
+		 */
+		for (n = 0; n < 64 && tuple_class[n].tuple != NULL; n++) {
+			if (tuple_class[n].flow4 == NULL) {
+				continue;
+			}
+			if (tuple_class[n].rmin == NULL) {
+				pr_debug (IPLB_NAME ":%s: rmin is null!!\n",
+					  __func__);
+				continue;
+			}
+			tuple_class[n].flow4->relay_index =
+				tuple_class[n].rmin->index;
+			tuple_class[n].d -=
+				IPLB_STATS_BPS (tuple_class[n].flow4->stats);
+			tuple_class[n].flow4 = NULL;
 		}
-	}
-
-	/*
-	 * Reassign tuple_class[n].flow4 to Rmin.
-	 */
-	for (n = 0; n < 64 && tuple_class[n].tuple != NULL; n++) {
-		if (tuple_class[n].flow4 == NULL) {
-			continue;
-		}
-		if (tuple_class[n].rmin == NULL) {
-			pr_debug (IPLB_NAME ":%s: rmin is null!!\n",
-				__func__);
-			continue;
-		}
-		tuple_class[n].flow4->relay_index = tuple_class[n].rmin->index;
 	}
 
 	return;
@@ -753,7 +763,7 @@ iplb_flow_classifier (unsigned long arg)
 {
 	unsigned long		next_timer;
 
-	if (!is_iplb_flow_classifier)
+	if (lookup_fn != lookup_relay_addr_from_tuple_flowbase)
 		return;
 
 	_cleanup_flow (arg);
@@ -1049,6 +1059,9 @@ lookup_relay_addr_from_tuple_weightbase (struct sk_buff * skb,
 
 	hash = ipv4_flow_hash (skb);
 	if (unlikely (!hash))
+		return NULL;
+
+	if (unlikely (tuple->weight_sum == 0))
 		return NULL;
 
 	relay = NULL;
@@ -2149,7 +2162,6 @@ iplb_nl_cmd_lookup_flowbase (struct sk_buff * skb, struct genl_info * info)
 	lookup_fn = lookup_relay_addr_from_tuple_flowbase;
 
 	/* start flow classifier */
-	is_iplb_flow_classifier = true;
 	mod_timer (&iplb_flow_classifier_timer,
 		   jiffies + FLOW_CLASSIFIER_INTERVAL);
 
@@ -2307,8 +2319,6 @@ __init iplb_init_module (void)
 	init_timer_deferrable (&iplb_flow_classifier_timer);
 	iplb_flow_classifier_timer.function = iplb_flow_classifier;
 	iplb_flow_classifier_timer.data = 0;
-
-	is_iplb_flow_classifier = false;
 
 	rc = genl_register_family_with_ops (&iplb_nl_family, iplb_nl_ops);
 	if (rc < 0)
