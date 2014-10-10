@@ -594,6 +594,7 @@ destroy_flow4 (void)
 	struct hlist_node * tmp;
 
 	hash_for_each_safe (flow4_table, n, tmp, flow4, hash) {
+		hash_del_rcu (&flow4->hash);
 		kfree_rcu (flow4, rcu);
 	}
 
@@ -2139,6 +2140,14 @@ iplb_nl_cmd_flow4_dump (struct sk_buff * skb, struct netlink_callback * cb)
 }
 
 static int
+iplb_nl_cmd_flow4_flush (struct sk_buff * skb, struct genl_info * info)
+{
+	destroy_flow4 ();
+
+	return 0;
+}
+
+static int
 iplb_nl_cmd_lookup_weightbase (struct sk_buff * skb, struct genl_info * info)
 {
 	lookup_fn = lookup_relay_addr_from_tuple_weightbase;
@@ -2271,6 +2280,11 @@ static struct genl_ops iplb_nl_ops[] = {
 	{
 		.cmd	= IPLB_CMD_FLOW4_GET,
 		.dumpit	= iplb_nl_cmd_flow4_dump,
+		.policy	= iplb_nl_policy,
+	},
+	{
+		.cmd	= IPLB_CMD_FLOW4_FLUSH,
+		.doit	= iplb_nl_cmd_flow4_flush,
 		.policy	= iplb_nl_policy,
 	},
 	{

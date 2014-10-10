@@ -271,7 +271,9 @@ usage (void)
 		 "             [ dport PORTNUM ]\n"
 		 "             [ index INDEX ]\n"
 		 "\n"
-		 "       ip lb show { detail | flow [ detail ] }\n"
+		 "       ip lb show [ detail ] \n"
+		 "\n"
+		 "       ip lb flow { show [ detail ] | flush }"
 		 "\n"
 		);
 
@@ -892,6 +894,48 @@ do_show_tunnel (void)
 }
 
 static int
+do_show (int argc, char ** argv)
+{
+	int cmd, ret;
+
+	if (*argv && strcmp (*argv, "tunnel") == 0) {
+		return do_show_tunnel ();
+	}
+
+	parse_args (argc, argv, &show_p);
+
+	switch (preferred_family) {
+	case AF_UNSPEC :
+	case AF_INET :
+		cmd = IPLB_CMD_PREFIX4_GET;
+		break;
+	case AF_INET6 :
+		cmd = IPLB_CMD_PREFIX6_GET;
+		break;
+	default :
+		fprintf (stderr, "invalid family\n");
+		return -1;
+	}
+
+	GENL_REQUEST (req, 1024, genl_family, 0, IPLB_GENL_VERSION,
+		      cmd, NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST);
+
+	req.n.nlmsg_seq = genl_rth.dump = ++genl_rth.seq;
+
+	if ((ret = rtnl_send (&genl_rth, &req, req.n.nlmsg_len)) < 0) {
+		fprintf (stderr, "%s:%d: error\n", __func__, __LINE__);
+		return -2;
+	}
+
+	if (rtnl_dump_filter (&genl_rth, prefix_nlmsg, NULL) < 0) {
+		fprintf (stderr, "Dump terminated\n");
+		exit (1);
+	}
+
+	return 0;
+}
+
+static int
 flow4_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 {
 	int len;
@@ -956,7 +1000,7 @@ flow4_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 			      info->stats[2].byte_count) * 8;
 
 		printf ("%s %s:%u->%s:%u index %u "
-			"%.2fpps %.2fbps\n",
+			"%.0fpps %.0fbps\n",
 			proto,
 			srcaddr, ntohs (info->sport),
 			dstaddr, ntohs (info->dport),
@@ -969,7 +1013,7 @@ flow4_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 }
 
 static int
-do_show_flow (void)
+do_flow_show (void)
 {
 	int ret, cmd;
 
@@ -982,7 +1026,7 @@ do_show_flow (void)
 		/* flow6_get will be implemented here */
 	default :
 		fprintf (stderr, "%s: invalid family \"%d\"\n",
-			 __func__, cmd);
+			 __func__, preferred_family);
 		return -1;
 	}
 
@@ -1004,50 +1048,44 @@ do_show_flow (void)
 }
 
 static int
-do_show (int argc, char ** argv)
+do_flow_flush (void)
 {
-	int cmd, ret;
-
-	if (*argv && strcmp (*argv, "tunnel") == 0) {
-		return do_show_tunnel ();
-	}
-
-	if (*argv && strcmp (*argv, "flow") == 0) {
-		parse_args (--argc, ++argv, &show_p);
-		return do_show_flow ();
-	}
-
-	parse_args (argc, argv, &show_p);
+	int cmd;
 
 	switch (preferred_family) {
 	case AF_UNSPEC :
 	case AF_INET :
-		cmd = IPLB_CMD_PREFIX4_GET;
+		cmd = IPLB_CMD_FLOW4_FLUSH;
 		break;
 	case AF_INET6 :
-		cmd = IPLB_CMD_PREFIX6_GET;
-		break;
+		/* flow4_flush wil be implmeneted here */
 	default :
-		fprintf (stderr, "invalid family\n");
+		fprintf (stderr, "%s: invalid family \"%d\"\n",
+			 __func__, preferred_family);
 		return -1;
 	}
 
 	GENL_REQUEST (req, 1024, genl_family, 0, IPLB_GENL_VERSION,
-		      cmd, NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST);
+		      cmd, NLM_F_REQUEST | NLM_F_ACK);
 
-	req.n.nlmsg_seq = genl_rth.dump = ++genl_rth.seq;
-
-	if ((ret = rtnl_send (&genl_rth, &req, req.n.nlmsg_len)) < 0) {
-		fprintf (stderr, "%s:%d: error\n", __func__, __LINE__);
+	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
 		return -2;
-	}
-
-	if (rtnl_dump_filter (&genl_rth, prefix_nlmsg, NULL) < 0) {
-		fprintf (stderr, "Dump terminated\n");
-		exit (1);
-	}
 
 	return 0;
+}
+
+static int
+do_flow (int argc, char ** argv)
+{
+	if (argc == 0 || matches (*argv, "show") == 0) {
+		parse_args (argc, argv, &show_p);
+		return do_flow_show ();
+	}
+	if (matches (*argv, "flush") == 0) {
+		return do_flow_flush ();
+	}
+
+	return -1;
 }
 
 int
@@ -1081,6 +1119,9 @@ do_iplb (int argc, char ** argv)
 
 	if (matches (*argv, "show") == 0)
 		return do_show (argc - 1, argv + 1);
+
+	if (matches (*argv, "flow") == 0)
+		return do_flow (argc - 1, argv + 1);
 
 	if (matches (*argv, "help") == 0)
 		usage ();
