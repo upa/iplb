@@ -849,8 +849,9 @@ ipv4_set_gre_encap (struct sk_buff * skb, struct relay_addr * relay)
 	ipiph->ttl	= 16;
 
 
-	ipiph->tot_len	= htons (ntohs (iph->tot_len) + sizeof (struct grehdr)
-		+ sizeof (struct iphdr));
+	ipiph->tot_len	= htons (ntohs (iph->tot_len)
+				 + sizeof (struct grehdr)
+				 + sizeof (struct iphdr));
 	ipiph->protocol = IPPROTO_GRE;
 	ipiph->check	= 0;
 	ipiph->saddr	= tunnel_src;
@@ -935,7 +936,8 @@ ipv4_set_lsrr_encap (struct sk_buff * skb, struct relay_addr * relay)
 
 	new_iph->daddr	= *relay->relay_ip4;
 	new_iph->ihl	+= sizeof (struct optlsrr) / 4;
-	new_iph->tot_len	+= htons (sizeof (struct optlsrr));
+	new_iph->tot_len  = htons (ntohs (new_iph->tot_len)
+				   + sizeof (struct optlsrr));
 	new_iph->check	= 0;
 	new_iph->check	= wrapsum (checksum (new_iph, sizeof (struct iphdr) +
 					     sizeof (struct optlsrr), 0));
