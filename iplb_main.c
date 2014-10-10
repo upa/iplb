@@ -2152,6 +2152,9 @@ iplb_nl_cmd_flow4_flush (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_lookup_weightbase (struct sk_buff * skb, struct genl_info * info)
 {
+	if (lookup_fn == lookup_relay_addr_from_tuple_weightbase)
+		return 0;
+
 	lookup_fn = lookup_relay_addr_from_tuple_weightbase;
 
 	printk (KERN_INFO "iplb: set lookup function \"weightbase\"\n");
@@ -2162,6 +2165,9 @@ iplb_nl_cmd_lookup_weightbase (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_lookup_hashbase (struct sk_buff * skb, struct genl_info * info)
 {
+	if (lookup_fn == lookup_relay_addr_from_tuple_hashbase)
+		return 0;
+
 	lookup_fn = lookup_relay_addr_from_tuple_hashbase;
 
 	printk (KERN_INFO "iplb: set lookup function \"hashbase\"\n");
@@ -2172,6 +2178,9 @@ iplb_nl_cmd_lookup_hashbase (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_lookup_flowbase (struct sk_buff * skb, struct genl_info * info)
 {
+	if (lookup_fn == lookup_relay_addr_from_tuple_flowbase)
+		return 0;
+
 	lookup_fn = lookup_relay_addr_from_tuple_flowbase;
 
 	/* start flow classifier */
