@@ -13,6 +13,9 @@
 #define DEBUG
 #endif
 
+#define FIRST_FLOW4_HASHBASE	/* When an incoming packet is init of new flow,
+				 * relay addr is decied by 5 tuple */
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/list.h>
@@ -507,6 +510,7 @@ find_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af, void * addr)
 	return NULL;
 }
 
+#ifndef FIRST_FLOW4_HASHBASE
 static struct relay_addr *
 find_smallest_relay_addr_from_tuple (struct relay_tuple * tuple)
 {
@@ -524,6 +528,7 @@ find_smallest_relay_addr_from_tuple (struct relay_tuple * tuple)
 
 	return smallest;
 }
+#endif
 
 static void
 patricia_destroy_relay_tuple (void * data)
@@ -952,6 +957,7 @@ static void (* ipv4_set_encap_func[]) (struct sk_buff *, struct relay_addr *)
 	ipv4_set_lsrr_encap
 };
 
+
 static inline u32
 ipv4_flow_hash (struct sk_buff * skb)
 {
@@ -986,6 +992,61 @@ ipv4_flow_hash (struct sk_buff * skb)
 	val2 = ip->daddr + ip->saddr;
 
 	return hash_32 (val1 + val2, 16);
+}
+
+static struct relay_addr *
+lookup_relay_addr_from_tuple_weightbase (struct sk_buff * skb,
+					 struct relay_tuple *tuple)
+{
+	u32 hash, w;
+	struct relay_addr * relay;
+
+	hash = ipv4_flow_hash (skb);
+	if (unlikely (!hash))
+		return NULL;
+
+	if (unlikely (tuple->weight_sum == 0))
+		return NULL;
+
+	relay = NULL;
+	w = hash % tuple->weight_sum;
+
+	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
+		if (relay->weight >= w) {
+			break;
+		}
+		w -= relay->weight;
+	}
+
+	return relay;
+}
+
+static struct relay_addr *
+lookup_relay_addr_from_tuple_hashbase (struct sk_buff * skb,
+					struct relay_tuple * tuple)
+{
+	u32 hash, h;
+	struct relay_addr * relay;
+
+	/* hashbase means all locator weights are 100. */
+
+	hash = ipv4_flow_hash (skb);
+	if (unlikely (!hash))
+		return NULL;
+
+	if (tuple->relay_count == 0)
+		return NULL;
+
+	relay = NULL;
+	h = hash % (tuple->relay_count * 100);
+
+	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
+		if (100 >= h)
+			break;
+		h -= 100;
+	}
+
+	return relay;
 }
 
 static inline u8
@@ -1041,7 +1102,11 @@ ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 
 	/* Flow Classifier for incommaing packet. */
 	if (flow4->relay_index == 0) {
+#ifndef FIRST_FLOW4_HASHBASE
 		relay = find_smallest_relay_addr_from_tuple (tuple);
+#else
+		relay = lookup_relay_addr_from_tuple_hashbase (skb, tuple);
+#endif
 		if (relay == NULL) {
 			printk (KERN_ERR IPLB_NAME
 				":%s: find_small_relay_addr failed\n",
@@ -1055,62 +1120,6 @@ ipv4_flow_classify (struct sk_buff * skb, struct relay_tuple * tuple)
 	flow4->updated = jiffies;
 
 	return flow4->relay_index;
-}
-
-
-static struct relay_addr *
-lookup_relay_addr_from_tuple_weightbase (struct sk_buff * skb,
-					 struct relay_tuple *tuple)
-{
-	u32 hash, w;
-	struct relay_addr * relay;
-
-	hash = ipv4_flow_hash (skb);
-	if (unlikely (!hash))
-		return NULL;
-
-	if (unlikely (tuple->weight_sum == 0))
-		return NULL;
-
-	relay = NULL;
-	w = hash % tuple->weight_sum;
-
-	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
-		if (relay->weight >= w) {
-			break;
-		}
-		w -= relay->weight;
-	}
-
-	return relay;
-}
-
-static struct relay_addr *
-lookup_relay_addr_from_tuple_hashbase (struct sk_buff * skb,
-					struct relay_tuple * tuple)
-{
-	u32 hash, h;
-	struct relay_addr * relay;
-
-	/* hashbase means all locator weights are 100. */
-
-	hash = ipv4_flow_hash (skb);
-	if (unlikely (!hash))
-		return NULL;
-
-	if (tuple->relay_count == 0)
-		return NULL;
-
-	relay = NULL;
-	h = hash % (tuple->relay_count * 100);
-
-	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
-		if (100 >= h)
-			break;
-		h -= 100;
-	}
-
-	return relay;
 }
 
 static struct relay_addr *
