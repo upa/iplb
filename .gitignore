@@ -51,3 +51,5 @@ pkt_gen
 .deps
 .libs
 .Po
+
+core
