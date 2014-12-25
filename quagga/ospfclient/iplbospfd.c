@@ -1,5 +1,8 @@
 /* iplb controller using ospf */
 
+#include <poll.h>
+#include <unistd.h>
+
 #include <zebra.h>
 #include "prefix.h"	/* needed by ospf_asbr.h */
 #include "privs.h"
@@ -38,14 +41,23 @@ lsa_read (struct thread * thread)
 {
 	int fd;
 	int ret;
+	struct pollfd x[1];
 
 	oc = THREAD_ARG (thread);
 	fd = THREAD_FD (thread);
 
-	ret = ospf_apiclient_handle_async (oc);
+	ret = ospf_apiclient_handle_async (oc);	// do callback functions.
 	if (ret < 0) {
 		printf ("%s: ospf_apiclient_handle_async failed\n", __func__);
 		exit (1);
+	}
+
+	/* check is the fd read buffer available */
+	x[0].fd = fd;
+	x[0].events = POLLIN;
+	if (poll (x, 1, 0) == 0) {
+		/* no LSA message in the fd. re-compute LSDB ! */
+		printf ("re-compute LSDB !!\n");
 	}
 
 	thread_add_read (master, lsa_read, oc, fd);
@@ -83,10 +95,12 @@ lsa_delete_callback (struct in_addr ifaddr, struct in_addr area_id,
 }
 
 
-static int
+static void
 usage ()
 {
-	printf ("usage: iplbospfd\n");
+	printf ("usage: iplbospfd\n"
+		"\t -s : ospfd api server address\n"
+		);
 	
 	return;
 }
@@ -94,19 +108,32 @@ usage ()
 int
 main (int argc, char ** argv)
 {
+	int ch;
+	char * apisrv = NULL;
 	struct thread thread;
-
-	if (argc < 2) {
-		usage ();
-		return 1;
-	}
 
 	zprivs_init (&ospfd_privs);
 	master = thread_master_create ();
 
-	oc = ospf_apiclient_connect (argv[1], ASYNCPORT);
+	while ((ch = getopt (argc, argv, "s:")) != -1) {
+		switch (ch) {
+		case 's' :
+			apisrv = optarg;
+			break;
+		default :
+			usage ();
+			return 1;
+		}
+	}
+
+	if (!apisrv) {
+		printf ("-s api server must be specified\n");
+		return 1;
+	}
+
+	oc = ospf_apiclient_connect (apisrv, ASYNCPORT);
 	if (!oc) {
-		printf ("Connecting to OSPF daemon of %s failed!\n", argv[1]);
+		printf ("Connecting to OSPF daemon of %s failed!\n", apisrv);
 		exit (1);
 	}
 	
