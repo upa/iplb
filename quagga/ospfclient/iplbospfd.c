@@ -39,10 +39,7 @@ struct zebra_privs_t ospfd_privs = {
 #include "ospfd/ospf_dump.h"
 #include "thread.h"
 #include "log.h"
-
-
-
-
+#include "list.h"
 
 
 
@@ -51,13 +48,51 @@ struct ospf_apiclient * oc;
 struct ospf_lsdb * lsdb;
 
 
+/*
+ * vertex for calculating spf inclueing ECMP relay points.
+ */
+
+struct vertex {
+	u_char type;		/* copied from LSA header */
+	struct in_addr id;	/* copied from LSA header */
+	struct lsa_header * lsa; /* Router or Network LSA */
+	uint32_t distance;	/* XXX: hop count */
+	struct list * incoming;	/* list of incoming vertexes */
+	struct list * outgoing;	/* list of outgoing vertexes */
+
+	struct list * stacks;	/* list of stacks of relaying vertexes.
+				 * stacks = [ [v,v,v] [v,v,v] [v,v,v] ]
+				 */
+};
+
+
+static struct vertex *
+ospf_vertex_new (struct ospf_lsa)
+{
+	struct vertex * new;
+
+	new = (struct vertex *) malloc (sizeof (struct vertex));
+	memset (new, 0, sizeof (struct vertex));
+
+	new->type = lsa->data->type;
+	new->id = lsa->data->id;
+	new->lsa = lsa->data;
+	new->incoming = list_new ();
+	new->outgoing = list_new ();
+	new->stacks = list_new ();
+
+	return new;
+}
+
+
+
 static struct ospf_lsa *
 ospf_lsa_new_from_header (struct lsa_header * lsah)
 {
 	struct ospf_lsa * new;
 
 	new = ospf_lsa_new ();
-	
+
 	new->data = ospf_lsa_data_new (lsah->length);
 	memcpy (new->data, lsah, lsah->length);
 
@@ -72,7 +107,6 @@ ospf_lsdb_dump (struct ospf_lsdb * db)
 	struct ospf_lsa * lsa;
 	struct route_node * rn;
 	struct route_table * rt;
-
 
 
 	printf ("================ Dump LSDB ================\n");
@@ -90,7 +124,7 @@ ospf_lsdb_dump (struct ospf_lsdb * db)
 		}
 	}
 
-	printf ("===========================================\n\n\n");	
+	printf ("===========================================\n\n\n");
 
 	return;
 }
@@ -127,6 +161,37 @@ iplbospfd_lsa_read (struct thread * thread)
 }
 
 /*
+ * Calculate LSDB related
+ */
+
+static struct ospf_lsa *
+ospf_lsdb_lookup_by_id_only (struct ospf_lsdb *lsdb, u_char type,
+			     struct in_addr id)
+{
+	struct route_table *table;
+	struct prefix_ls lp;
+	struct route_node *rn;
+	struct ospf_lsa *find;
+
+	table = lsdb->type[type].db;
+
+	memset (&lp, 0, sizeof (struct prefix_ls));
+	lp.family = 0;
+	lp.prefixlen = 32;
+	lp.id = id;
+
+	rn = route_node_lookup (table, (struct prefix *) &lp);
+	if (rn)
+	{
+		find = rn->info;
+		route_unlock_node (rn);
+		return find;
+	}
+	return NULL;
+}
+
+
+/*
  * Callback functions for asyncronous events.
  */
 
@@ -157,7 +222,7 @@ lsa_delete_callback (struct in_addr ifaddr, struct in_addr area_id,
 	old = ospf_lsdb_lookup (lsdb, lsa);
 	if (old)
 		ospf_lsdb_delete (lsdb, old);
-	else 
+	else
 		D ("Old LSA is not found in LSDB!!");
 
 	lsa->lock--;
