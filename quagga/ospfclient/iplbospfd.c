@@ -250,6 +250,7 @@ ospf_lsdb_to_vertexes (struct ospf_lsdb * db, struct in_addr adv_router)
 				/* set link v to nei */
 				listnode_add (v->outgoing, nei);
 				listnode_add (nei->incoming, v);
+				break;
 
 			default :
 				break;
@@ -292,13 +293,22 @@ ospf_lsdb_to_vertexes (struct ospf_lsdb * db, struct in_addr adv_router)
 		attached++;	// next attached router
 	}
 
-	/* XXX: Free nv and rv */
-
+	/* root for calculating spf and its ecmp */
 	v = ospf_vertex_look_up (rv, adv_router, adv_router);
-	if (!v) {
-		D ("Router LSA of myself is not found!!");
-		return NULL;
+
+	/* cleanup rv and nv */
+	for (rn = route_top (rv); rn; rn = route_next (rn)) {
+		rn->info = NULL;
+		route_unlock_node (rn);
 	}
+	route_table_finish (rv);
+
+	for (rn = route_top (nv); rn; rn = route_next (rn)) {
+		rn->info = NULL;
+		route_unlock_node (rn);
+	}
+	route_table_finish (nv);
+
 
 	return v;
 }
@@ -307,11 +317,12 @@ static struct vertex *
 iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 {
 	struct vertex * v;
-	struct list * candidate;
-
-	candidate = list_new ();
 
 	v = ospf_lsdb_to_vertexes (db, adv_router);
+	if (!v) {
+		D ("convert lsdb to graph failed.");
+		return NULL;
+	}
 
 	return v;
 }
