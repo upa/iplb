@@ -59,7 +59,14 @@ struct vertex {
 	u_char type;		/* copied from LSA header */
 	struct in_addr id;	/* copied from LSA header */
 	struct lsa_header * lsa; /* Router or Network LSA */
+
 	uint32_t distance;	/* XXX: hop count */
+	int state;		/* OSPF_VERTEX_STATE */
+#define OSPF_VERTEX_NOVISIT	0
+#define OSPF_VERTEX_CANDIDATE	1
+#define OSPF_VERTEX_VISITED	2
+
+	struct vertex * parent;	/* parent */
 
 	struct list * incoming;	/* incoming vertexes */
 	struct list * outgoing;	/* outgoing vertexes */
@@ -81,9 +88,14 @@ ospf_vertex_new (struct ospf_lsa * lsa)
 	new->id = lsa->data->id;
 	new->lsa = lsa->data;
 
+	new->parent = NULL;
+
 	new->incoming = list_new ();
 	new->outgoing = list_new ();
 	new->stacks = list_new ();
+
+	new->distance = 0;
+	new->state = OSPF_VERTEX_NOVISIT;
 
 	return new;
 }
@@ -91,6 +103,23 @@ ospf_vertex_new (struct ospf_lsa * lsa)
 /*
  * Calculate LSDB related
  */
+
+static void
+ospf_vertex_table_destroy (struct route_table * rt)
+{
+	struct route_node * rn;
+
+	for (rn = route_top (rt); rn; rn = route_next (rn)) {
+		if (rn->info) {
+			free (rn->info);
+			rn->info = NULL;
+		}
+		route_unlock_node (rn);
+	}
+	route_table_finish (rt);
+
+	return;
+}
 
 static struct vertex *
 ospf_vertex_look_up_id (struct route_table * vs, struct in_addr id)
@@ -140,37 +169,17 @@ ospf_vertex_look_up (struct route_table * vs, struct in_addr id,
 	return NULL;
 }
 
-static struct vertex *
-ospf_lsdb_to_vertexes (struct ospf_lsdb * db, struct in_addr adv_router)
+static int
+ospf_lsdb_to_vertexes (struct ospf_lsdb * db, struct route_table ** ret_rv,
+		       struct route_table ** ret_nv)
 {
 	/* create complete graph from LSDB */
 	char addrbuf1[16], addrbuf2[16];
 	struct prefix_ls lp;
 	struct ospf_lsa * lsa;
 	struct route_node * rn;
-	struct vertex * v, * nei;
+	struct vertex * v;
 	struct route_table * nv, * rv;
-
-	/* create vertexes for network LSA */
-	nv = route_table_init ();
-
-	LSDB_LOOP (db->type[OSPF_NETWORK_LSA].db, rn, lsa) {
-		v = ospf_vertex_new (lsa);
-		ls_prefix_set (&lp, lsa);
-		rn = route_node_get (nv, (struct prefix *) &lp);
-
-		if (rn->info) {
-			inet_ntop (AF_INET, &lsa->data->adv_router, addrbuf1,
-				   sizeof (addrbuf1));
-			inet_ntop (AF_INET, &lsa->data->id, addrbuf1,
-				   sizeof (addrbuf1));
-			D ("Duplicated Network LSA adv=%s id=%s",
-			   addrbuf1, addrbuf2);
-			return NULL; // XXX: free nv and v
-		}
-
-		rn->info = v;
-	}
 
 	/* create vertexes for router LSA */
 	rv = route_table_init ();
@@ -187,142 +196,204 @@ ospf_lsdb_to_vertexes (struct ospf_lsdb * db, struct in_addr adv_router)
 				   sizeof (addrbuf1));
 			D ("Duplicated ROUTER LSA adv=%s id=%s",
 			   addrbuf1, addrbuf2);
-			return NULL; // XXX: free nv and v
+
+			ospf_vertex_table_destroy (rv);
+			return 0;
 		}
 
 		rn->info = v;
 	}
 
+	/* create vertexes for network LSA */
+	nv = route_table_init ();
 
-	/* set up link from router vertexes */
-	for (rn = route_top (rv); rn; rn = route_next (rn)) {
+	LSDB_LOOP (db->type[OSPF_NETWORK_LSA].db, rn, lsa) {
+		v = ospf_vertex_new (lsa);
+		ls_prefix_set (&lp, lsa);
+		rn = route_node_get (nv, (struct prefix *) &lp);
 
-		int len;
-		struct router_lsa * rlsa;
-		struct router_lsa_link * llsa;
-
-		v = rn->info;
-		rlsa = (struct router_lsa *) v->lsa;
-
-		/* parse router lsa */
-		len = v->lsa->length - sizeof (struct lsa_header);
-		for (llsa = (struct router_lsa_link *) rlsa->link; len > 0;
-		     len -= sizeof (struct router_lsa_link)) {
-
-			switch (llsa->m[0].type) {
-			case LSA_LINK_TYPE_POINTOPOINT :
-				/* link id and adv router are
-				 * router id of neighbor
-				 */
-				nei = ospf_vertex_look_up (rv, llsa->link_id,
-							   llsa->link_id);
-				if (!nei) {
-					inet_ntop (AF_INET, &v->id, addrbuf1,
-						   sizeof (addrbuf1));
-					inet_ntop (AF_INET, &llsa->link_id,
-						   addrbuf2,
-						   sizeof (addrbuf2));
-					D ("Neighbor Router "
-					   "%s of %s is not found",
-					   addrbuf1, addrbuf2);
-				}
-
-				/* set link v to nei */
-				listnode_add (v->outgoing, nei);
-				listnode_add (nei->incoming, v);
-				break;
-
-			case LSA_LINK_TYPE_TRANSIT :
-				/* link id is interface address of DR */
-				nei =ospf_vertex_look_up_id (nv,
-							     llsa->link_id);
-				if (!nei) {
-					inet_ntop (AF_INET, &v->id, addrbuf1,
-						   sizeof (addrbuf1));
-					inet_ntop (AF_INET, &llsa->link_id,
-						   addrbuf2,
-						   sizeof (addrbuf2));
-					D ("Neighbor Network "
-					   "%s of %s is not found",
-					   addrbuf1, addrbuf2);
-				}
-
-				/* set link v to nei */
-				listnode_add (v->outgoing, nei);
-				listnode_add (nei->incoming, v);
-				break;
-
-			default :
-				break;
-			}
-
-			llsa++;	// next router lsa link
+		if (rn->info) {
+			inet_ntop (AF_INET, &lsa->data->adv_router, addrbuf1,
+				   sizeof (addrbuf1));
+			inet_ntop (AF_INET, &lsa->data->id, addrbuf1,
+				   sizeof (addrbuf1));
+			D ("Duplicated Network LSA adv=%s id=%s",
+			   addrbuf1, addrbuf2);
+			ospf_vertex_table_destroy (rv);
+			ospf_vertex_table_destroy (nv);
+			return 0;
 		}
+
+		rn->info = v;
 	}
 
-	/* set up link from network vertexes */
-	for (rn = route_top (nv); rn; rn = route_next (rn)) {
-		int len;
-		struct network_lsa * nlsa;
-		struct in_addr * attached;
+	*ret_rv = rv;
+	*ret_nv = nv;
 
-		v = rn->info;
-		nlsa = (struct network_lsa *) v->lsa;
+	return 1;
+}
 
-		/* parse attached router list */
-		len = v->lsa->length - sizeof (struct network_lsa);
-		for (attached = nlsa->routers; len > 0;
-		     len -= sizeof (struct in_addr)) {
 
-			nei = ospf_vertex_look_up (rv, *attached, * attached);
+static void
+ospf_vertex_candidate_add_router (struct vertex * v, struct vertex * nei,
+				  struct list * candidate)
+{
+	if (nei->state == OSPF_VERTEX_NOVISIT) {
+		/* 1st visited. add link */
+		nei->distance = v->distance + 1;
+		nei->state = OSPF_VERTEX_CANDIDATE;
+		nei->parent = v;
+		listnode_add (candidate, nei);
+	} else if (nei->distance > v->distance + 1) {
+		/* nearest route. update cost and parent. */
+		nei->distance = v->distance + 1;
+		nei->parent = v;
+	} else if (nei->state == OSPF_VERTEX_VISITED && nei->parent != v &&
+		   nei->distance == v->distance + 1) {
+		/* This link is ECMP. Add link. */
+		listnode_add (nei->incoming, v);
+		listnode_add (v->outgoing, nei);
+	}
+
+	return;
+}
+
+static void
+ospf_vertex_candidate_add_network (struct vertex * v, struct vertex * net,
+				   struct list * candidate,
+				   struct route_table * rv)
+{
+	int len;
+	char ab1[16], ab2[16];
+	struct vertex * nei;
+	struct in_addr * attached;
+	struct network_lsa * nlsa;
+
+	nlsa = (struct network_lsa *) v->lsa;
+
+	len = net->lsa->length - sizeof (struct network_lsa);
+	for (attached = nlsa->routers; len > 0;
+	     len -= sizeof (struct in_addr)) {
+
+		nei = ospf_vertex_look_up (rv, *attached, *attached);
+		if (!nei) {
+			inet_ntop (AF_INET, attached, ab1, sizeof (ab1));
+			inet_ntop (AF_INET, &v->id, ab2, sizeof (ab2));
+			D ("Neighbor Router %s of %s is not found", ab1, ab2);
+			continue;
+		}
+		ospf_vertex_candidate_add_router (v, nei, candidate);
+	}
+
+	return;
+}
+
+static void
+ospf_vertex_candidate_add (struct vertex * v, struct list * candidate,
+			   struct route_table * rv, struct route_table * nv)
+{
+	int len;
+	char addrbuf1[16], addrbuf2[2];
+	struct vertex * nei;
+	struct router_lsa * rlsa;
+	struct router_lsa_link * llsa;
+
+	/* find neighbor */
+	if (v->type != OSPF_ROUTER_LSA) {
+		D ("this vertex is not router !!\n");
+		return;
+	}
+
+	rlsa = (struct router_lsa *) v->lsa;
+
+	len = v->lsa->length - sizeof (struct lsa_header);
+	for (llsa = (struct router_lsa_link *)rlsa->link; len > 0;
+	     len -= sizeof (struct router_lsa_link)) {
+
+		switch (llsa->m[0].type) {
+		case LSA_LINK_TYPE_POINTOPOINT :
+			/* link id and av router are router id of neighbor */
+
+			nei = ospf_vertex_look_up (rv, llsa->link_id,
+						   llsa->link_id);
 			if (!nei) {
 				inet_ntop (AF_INET, &v->id, addrbuf1,
 					   sizeof (addrbuf1));
-				inet_ntop (AF_INET, attached, addrbuf2,
-					   sizeof (addrbuf2));
-				D ("Attached Router"
-				   "%s of network %s is not found",
-				   addrbuf2, addrbuf1);
+				inet_ntop (AF_INET, &llsa->link_id,
+					   addrbuf2, sizeof (addrbuf2));
+				D ("Neighbor Router %s of %s is not found",
+				   addrbuf1, addrbuf2);
 			}
 
-			/* set link newtork v to router nei */
-			listnode_add (v->outgoing, nei);
-			listnode_add (nei->incoming, v);
+			ospf_vertex_candidate_add_router (v, nei, candidate);
+			break;
+
+		case LSA_LINK_TYPE_TRANSIT :
+			/* link id is interface address of DR.
+			 * 1. Find network vertex, and
+			 * 2. candidate_add_network for each router vertexes
+			 * connected to the network vertex.
+			 */
+			nei = ospf_vertex_look_up_id (nv, llsa->link_id);
+			if (!nei) {
+				inet_ntop (AF_INET, &v->id, addrbuf1,
+					   sizeof (addrbuf1));
+				inet_ntop (AF_INET, &llsa->link_id,
+					   addrbuf2, sizeof (addrbuf2));
+				D ("Network %s of %s is not found",
+				   addrbuf1, addrbuf2);
+			}
+			ospf_vertex_candidate_add_network (v, nei, candidate,
+							   rv);
 		}
 
-		attached++;	// next attached router
 	}
 
-	/* root for calculating spf and its ecmp */
-	v = ospf_vertex_look_up (rv, adv_router, adv_router);
+	return;
+}
 
-	/* cleanup rv and nv */
-	for (rn = route_top (rv); rn; rn = route_next (rn)) {
-		rn->info = NULL;
-		route_unlock_node (rn);
+static struct vertex *
+ospf_vertex_candidate_decide (struct list * candidate)
+{
+	u_int32_t distance = 0xFFFFFFFF;
+	struct vertex * v, * next;
+	struct listnode * node;
+
+	v = NULL;
+	next = NULL;
+
+	for (ALL_LIST_ELEMENTS_RO (candidate, node, v)) {
+		if (v->distance < distance) {
+			next = v;
+			distance = v->distance;
+		}
 	}
-	route_table_finish (rv);
 
-	for (rn = route_top (nv); rn; rn = route_next (rn)) {
-		rn->info = NULL;
-		route_unlock_node (rn);
-	}
-	route_table_finish (nv);
-
-
-	return v;
+	return next;
 }
 
 static struct vertex *
 iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 {
+	int ret;
 	struct vertex * v;
+	struct route_table * rv, * nv;
+	struct list * candidate;
 
-	v = ospf_lsdb_to_vertexes (db, adv_router);
-	if (!v) {
+	rv = NULL;
+	nv = NULL;
+	ret = ospf_lsdb_to_vertexes (db, &rv, &nv);
+
+	if (!ret) {
 		D ("convert lsdb to graph failed.");
 		return NULL;
 	}
+
+	/* caluculate spf with ecmp relay points */
+	candidate = list_new ();
+	v = ospf_vertex_look_up (rv, adv_router, adv_router);
+	v->distance = 1;
+	ospf_vertex_candidate_add (v, candidate, rv, nv);
 
 	return v;
 }
