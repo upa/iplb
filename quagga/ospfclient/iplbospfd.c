@@ -44,7 +44,7 @@ struct zebra_privs_t ospfd_privs = {
 
 
 
-struct in_addr adv_router;	// The router for own node
+struct in_addr adv_router = { 0, };	// The router for own node
 struct thread_master * master;
 struct ospf_apiclient * oc;
 struct ospf_lsdb * lsdb;
@@ -125,6 +125,16 @@ vertex_free (struct vertex * v)
  */
 
 static void
+id_prefix_set (struct prefix_ls * lp, struct ospf_lsa * lsa)
+{
+	if (lp && lsa && lsa->data) {
+		lp->family = 0;
+		lp->prefixlen = 32;
+		lp->id = lsa->data->id;
+	}
+}
+
+static void
 vertex_table_destroy (struct route_table * rt)
 {
 	struct route_node * rn;
@@ -134,7 +144,6 @@ vertex_table_destroy (struct route_table * rt)
 			vertex_free (rn->info);
 			rn->info = NULL;
 		}
-		route_unlock_node (rn);
 	}
 	route_table_finish (rt);
 
@@ -195,14 +204,14 @@ ospf_lsdb_to_vertex_graph (struct ospf_lsdb * db, struct vertex_graph * graph)
 	char addrbuf1[16], addrbuf2[16];
 	struct prefix_ls lp;
 	struct ospf_lsa * lsa;
-	struct route_node * rn;
+	struct route_node * rn, * lrn;
 	struct vertex * v;
 	struct route_table * nv, * rv;
 
 	/* create vertex table for router LSA */
 	rv = route_table_init ();
 
-	LSDB_LOOP (db->type[OSPF_ROUTER_LSA].db, rn, lsa) {
+	LSDB_LOOP (db->type[OSPF_ROUTER_LSA].db, lrn, lsa) {
 		v = vertex_new (lsa);
 		ls_prefix_set (&lp, lsa);
 		rn = route_node_get (rv, (struct prefix *) &lp);
@@ -225,9 +234,9 @@ ospf_lsdb_to_vertex_graph (struct ospf_lsdb * db, struct vertex_graph * graph)
 	/* create vertex table for network LSA */
 	nv = route_table_init ();
 
-	LSDB_LOOP (db->type[OSPF_NETWORK_LSA].db, rn, lsa) {
+	LSDB_LOOP (db->type[OSPF_NETWORK_LSA].db, lrn, lsa) {
 		v = vertex_new (lsa);
-		ls_prefix_set (&lp, lsa);
+		id_prefix_set (&lp, lsa);
 		rn = route_node_get (nv, (struct prefix *) &lp);
 
 		if (rn->info) {
@@ -300,20 +309,23 @@ vertex_candidate_add_network (struct vertex * v, struct vertex * net,
 	struct in_addr * attached;
 	struct network_lsa * nlsa;
 
-	nlsa = (struct network_lsa *) v->lsa;
+	nlsa = (struct network_lsa *) net->lsa;
 
-	len = net->lsa->length - sizeof (struct network_lsa);
+	len = ntohs (net->lsa->length) - sizeof (struct lsa_header) - 4;
+
 	for (attached = nlsa->routers; len > 0;
 	     len -= sizeof (struct in_addr)) {
 
 		nei = vertex_table_lookup (rv, *attached, *attached);
 		if (!nei) {
 			inet_ntop (AF_INET, attached, ab1, sizeof (ab1));
-			inet_ntop (AF_INET, &v->id, ab2, sizeof (ab2));
+			inet_ntop (AF_INET, &net->id, ab2, sizeof (ab2));
 			D ("Neighbor Router %s of %s is not found", ab1, ab2);
-			continue;
+			assert (nei);
 		}
 		vertex_candidate_add_router (v, nei, candidate);
+
+		attached++;
 	}
 
 	return;
@@ -323,8 +335,8 @@ static void
 vertex_candidate_add (struct vertex * v, struct list * candidate,
 		      struct vertex_graph * graph)
 {
-	int len;
-	char ab1[16], ab2[2];
+	int len, links;
+	char ab1[16], ab2[16];
 	struct vertex * nei;
 	struct router_lsa * rlsa;
 	struct router_lsa_link * llsa;
@@ -335,15 +347,17 @@ vertex_candidate_add (struct vertex * v, struct list * candidate,
 
 	/* find neighbor */
 	if (v->type != OSPF_ROUTER_LSA) {
-		D ("this vertex is not router !!\n");
+		D ("this vertex is not router !!");
 		return;
 	}
 
 	rlsa = (struct router_lsa *) v->lsa;
 
-	len = v->lsa->length - sizeof (struct lsa_header);
-	for (llsa = (struct router_lsa_link *)rlsa->link; len > 0;
-	     len -= sizeof (struct router_lsa_link)) {
+	len = ntohs (v->lsa->length) - sizeof (struct lsa_header) - 4;
+	links = ntohs (rlsa->links);
+
+	for (llsa = (struct router_lsa_link *)rlsa->link; len > 0 && links > 0;
+	     len -= sizeof (struct router_lsa_link), links--) {
 
 		switch (llsa->m[0].type) {
 		case LSA_LINK_TYPE_POINTOPOINT :
@@ -356,6 +370,7 @@ vertex_candidate_add (struct vertex * v, struct list * candidate,
 				inet_ntop (AF_INET, &llsa->link_id,
 					   ab2, sizeof (ab2));
 				D ("Neighbor %s of %s is not found", ab1, ab2);
+				assert (nei);
 			}
 
 			vertex_candidate_add_router (v, nei, candidate);
@@ -372,13 +387,15 @@ vertex_candidate_add (struct vertex * v, struct list * candidate,
 				inet_ntop (AF_INET, &v->id, ab1, sizeof (ab1));
 				inet_ntop (AF_INET, &llsa->link_id,
 					   ab2, sizeof (ab2));
-				D ("Network %s of %s is not found", ab1, ab2);
+				D ("Network %s of %s is not found", ab2, ab1);
+				assert (nei);
 			}
 
 			vertex_candidate_add_network (v, nei, candidate, rv);
 			break;
 		}
 
+		llsa++;
 	}
 
 	return;
@@ -406,11 +423,28 @@ vertex_candidate_decide (struct list * candidate)
 		 * mark visited, and create new link
 		 */
 		next->state = OSPF_VERTEX_VISITED;
-		listnode_add (next->incoming, next->parent);
-		listnode_add (next->parent->outgoing, next);
+		if (next->parent) {
+			listnode_add (next->incoming, next->parent);
+			listnode_add (next->parent->outgoing, next);
+		}
+
+		listnode_delete (candidate, next);
 	}
 
 	return next;
+}
+
+static void
+candidate_dump (struct list * candidate)
+{
+	struct listnode * node, * next;
+	struct vertex * v;
+
+	for (node = candidate->head; node; node = next) {
+		next = node->next;
+		v = node->data;
+		D ("Vertex ID : %s", inet_ntoa (v->id));
+	}
 }
 
 static struct vertex_graph
@@ -434,15 +468,19 @@ iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 	candidate = list_new ();
 
 	root = vertex_table_lookup (graph.rv_table, adv_router, adv_router);
-	root->distance = 1;
-	vertex_candidate_add (root, candidate, &graph);
+	listnode_add (candidate, root);
+
+
 
 	while (listcount (candidate)) {
 		D ("candidate count is %d", listcount (candidate));
+		candidate_dump (candidate);
 
 		v = vertex_candidate_decide (candidate);
 		vertex_candidate_add (v, candidate, &graph);
 	}
+
+	list_delete (candidate);
 
 	return graph;
 }
@@ -482,7 +520,6 @@ ospf_lsdb_dump (struct ospf_lsdb * db)
 		if ((rt = db->type[type].db) == NULL)
 			continue;
 
-
 		for (rn = route_top (rt); rn; rn = route_next (rn)) {
 			if ((lsa = rn->info) != NULL) {
 				ospf_lsa_header_dump (lsa->data);
@@ -508,7 +545,7 @@ iplbospfd_lsa_read (struct thread * thread)
 
 	ret = ospf_apiclient_handle_async (oc);	// do callback functions.
 	if (ret < 0) {
-		D ("%s: ospf_apiclient_handle_async failed\n", __func__);
+		D ("%s: ospf_apiclient_handle_async failed", __func__);
 		exit (1);
 	}
 
@@ -571,6 +608,7 @@ usage ()
 {
 	printf ("usage: iplbospfd\n"
 		"\t -s : ospfd api server address\n"
+		"\t -r : router id for root of psf tree\n"
 		);
 	
 	return;
@@ -606,13 +644,17 @@ main (int argc, char ** argv)
 	}
 
 	if (!apisrv) {
-		D ("-s api server must be specified\n");
+		D ("-s api server must be specified");
+		return 1;
+	}
+	if (adv_router.s_addr == 0) {
+		D ("-r router id for root of tree must be specified");
 		return 1;
 	}
 
 	oc = ospf_apiclient_connect (apisrv, ASYNCPORT);
 	if (!oc) {
-		D ("Connecting to OSPF daemon of %s failed!\n", apisrv);
+		D ("Connecting to OSPF daemon of %s failed!", apisrv);
 		exit (1);
 	}
 	
