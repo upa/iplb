@@ -66,8 +66,6 @@ struct vertex {
 #define OSPF_VERTEX_CANDIDATE	1
 #define OSPF_VERTEX_VISITED	2
 
-	struct vertex * parent;	/* parent */
-
 	struct list * incoming;	/* incoming vertexes */
 	struct list * outgoing;	/* outgoing vertexes */
 	struct list * stacks;	/* list of stacks of relaying vertexes.
@@ -92,8 +90,6 @@ vertex_new (struct ospf_lsa * lsa)
 	new->type = lsa->data->type;
 	new->id = lsa->data->id;
 	new->lsa = lsa->data;
-
-	new->parent = NULL;
 
 	new->incoming = list_new ();
 	new->outgoing = list_new ();
@@ -288,22 +284,48 @@ static void
 vertex_candidate_add_router (struct vertex * v, struct vertex * nei,
 			     struct list * candidate)
 {
+	struct listnode * node;
+	struct vertex * vo;
+
 	if (nei->state == OSPF_VERTEX_NOVISIT) {
 		/* 1st visited. add to candidate. */
 		nei->distance = v->distance + 1;
 		nei->state = OSPF_VERTEX_CANDIDATE;
-		nei->parent = v;
+
+		listnode_add (nei->incoming, v);
+		listnode_add (v->outgoing, nei);
 		listnode_add (candidate, nei);
+
 	} else if (nei->state == OSPF_VERTEX_CANDIDATE &&
 		   nei->distance > v->distance + 1) {
 		/* new shorter route to candidate vertex is found.
-		 * update cost and parent.
+		 * update cost and links.
 		 */
 		nei->distance = v->distance + 1;
-		nei->parent = v;
-	} else if (nei->state == OSPF_VERTEX_VISITED && nei->parent != v &&
+
+		list_delete (nei->incoming);
+		for (ALL_LIST_ELEMENTS_RO (nei->incoming, node, vo)) {
+			listnode_delete (vo->outgoing, nei);
+		}
+		
+		listnode_add (nei->incoming, v);
+		listnode_add (v->outgoing, nei);
+
+	} else if (nei->state == OSPF_VERTEX_CANDIDATE &&
+		   !listnode_lookup (nei->incoming, v) &&
 		   nei->distance == v->distance + 1) {
-		/* This link is ECMP. Add link. */
+		/* new ECMP link to candidate vertex is found.
+		 * add link.
+		 */
+		listnode_add (nei->incoming, v);
+		listnode_add (v->outgoing, nei);
+
+	} else if (nei->state == OSPF_VERTEX_VISITED && 
+		   !listnode_lookup (nei->incoming, v) &&
+		   nei->distance == v->distance + 1) {
+		/* new ECMP link to visited vertex is found.
+		 * add link.
+		 */
 		listnode_add (nei->incoming, v);
 		listnode_add (v->outgoing, nei);
 	}
@@ -435,11 +457,6 @@ vertex_candidate_decide (struct list * candidate)
 		 * mark visited, and create new link
 		 */
 		next->state = OSPF_VERTEX_VISITED;
-		if (next->parent) {
-			listnode_add (next->incoming, next->parent);
-			listnode_add (next->parent->outgoing, next);
-		}
-
 		listnode_delete (candidate, next);
 	}
 
