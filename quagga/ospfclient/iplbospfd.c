@@ -78,9 +78,6 @@ struct vertex {
 struct vertex_graph {
 	struct route_table * rv_table;	/* table for router LSA vertexes */
 	struct route_table * nv_table;	/* table for network LSA vertexes */
-	struct vertex * root;		/* root of spf tree */
-
-	struct list * candidate; /* candidate vertexes for spf calculation */
 };
 
 
@@ -198,10 +195,31 @@ vertex_table_lookup (struct route_table * vt, struct in_addr id,
 }
 
 static int
+ospf_lsa_compare (struct lsa_header * la, struct lsa_header * lb)
+{
+	/* if la is newer than lb, return 1*/
+
+	/* first, compare LS seqnumber */
+	if (la->ls_seqnum > lb->ls_seqnum)
+		return 1;
+	else if (la->ls_seqnum < lb->ls_seqnum)
+		return -1;
+
+	/* second, compare LS age */
+	if (la->ls_age < lb->ls_age)
+		return 1;
+	else if (la->ls_age > lb->ls_age)
+		return -1;
+
+	/* XXX: finally, should compare checksum */
+
+	return 0;
+}
+
+static int
 ospf_lsdb_to_vertex_graph (struct ospf_lsdb * db, struct vertex_graph * graph)
 {
 	/* create complete graph from LSDB */
-	char addrbuf1[16], addrbuf2[16];
 	struct prefix_ls lp;
 	struct ospf_lsa * lsa;
 	struct route_node * rn, * lrn;
@@ -212,51 +230,46 @@ ospf_lsdb_to_vertex_graph (struct ospf_lsdb * db, struct vertex_graph * graph)
 	rv = route_table_init ();
 
 	LSDB_LOOP (db->type[OSPF_ROUTER_LSA].db, lrn, lsa) {
-		v = vertex_new (lsa);
+
 		ls_prefix_set (&lp, lsa);
 		rn = route_node_get (rv, (struct prefix *) &lp);
 
 		if (rn->info) {
-			inet_ntop (AF_INET, &lsa->data->adv_router, addrbuf1,
-				   sizeof (addrbuf1));
-			inet_ntop (AF_INET, &lsa->data->id, addrbuf1,
-				   sizeof (addrbuf1));
-			D ("Duplicated ROUTER LSA adv=%s id=%s",
-			   addrbuf1, addrbuf2);
-
-			vertex_table_destroy (rv);
-			return 0;
+			v = rn->info;
+			if (ospf_lsa_compare (lsa->data, v->lsa) > 0) {
+				/* processing lsa is newer !! */
+				vertex_free (v);
+			} else {
+				/* existing vertex is newer !! */
+				continue;
+			}
 		}
 
-		rn->info = v;
+		rn->info = vertex_new (lsa);
 	}
 
 	/* create vertex table for network LSA */
 	nv = route_table_init ();
 
 	LSDB_LOOP (db->type[OSPF_NETWORK_LSA].db, lrn, lsa) {
-		v = vertex_new (lsa);
+
 		id_prefix_set (&lp, lsa);
 		rn = route_node_get (nv, (struct prefix *) &lp);
 
 		if (rn->info) {
-			inet_ntop (AF_INET, &lsa->data->adv_router, addrbuf1,
-				   sizeof (addrbuf1));
-			inet_ntop (AF_INET, &lsa->data->id, addrbuf1,
-				   sizeof (addrbuf1));
-			D ("Duplicated Network LSA adv=%s id=%s",
-			   addrbuf1, addrbuf2);
-			vertex_table_destroy (rv);
-			vertex_table_destroy (nv);
-			return 0;
+			v = rn->info;
+			if (ospf_lsa_compare (lsa->data, v->lsa) > 0) {
+				vertex_free (v);
+			} else {
+				continue;
+			}
 		}
 
-		rn->info = v;
+		rn->info = vertex_new (lsa);
 	}
 
 	graph->rv_table = rv;
 	graph->nv_table = nv;
-	graph->candidate = list_new ();
 
 	return 1;
 }
@@ -267,7 +280,6 @@ vertex_graph_destroy (struct vertex_graph * graph)
 {
 	vertex_table_destroy (graph->rv_table);
 	vertex_table_destroy (graph->nv_table);
-	list_delete (graph->candidate);
 
 	return;
 }
@@ -447,6 +459,30 @@ candidate_dump (struct list * candidate)
 	}
 }
 
+static void
+graph_dump (struct vertex_graph * graph)
+{
+	struct vertex * v;
+	struct route_node * rn;
+	struct listnode * node, * next;
+
+	for (rn = route_top (graph->rv_table); rn; rn = route_next (rn)) {
+		if (!rn->info) {
+			continue;
+		}
+
+		v = rn->info;
+
+		printf ("Vertex: %s\n", inet_ntoa (v->id));
+		
+		for (node = v->outgoing->head; node; node = next) {
+			next = node->next;
+			v = node->data;
+			printf ("    -> %s\n", inet_ntoa (v->id));
+		}
+	}
+}
+
 static struct vertex_graph
 iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 {
@@ -468,13 +504,20 @@ iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 	candidate = list_new ();
 
 	root = vertex_table_lookup (graph.rv_table, adv_router, adv_router);
+	if (!root) {
+		D ("specified router as root node is not found in LSDB");
+		return graph;
+	}
+
 	listnode_add (candidate, root);
 
 
 
 	while (listcount (candidate)) {
+
 		D ("candidate count is %d", listcount (candidate));
 		candidate_dump (candidate);
+
 
 		v = vertex_candidate_decide (candidate);
 		vertex_candidate_add (v, candidate, &graph);
@@ -557,6 +600,8 @@ iplbospfd_lsa_read (struct thread * thread)
 		D ("re-compute LSDB !!");
 		ospf_lsdb_dump (lsdb);
 		graph = iplb_relay_calculate (lsdb, adv_router);
+
+		graph_dump (&graph);
 
 		vertex_graph_destroy (&graph);
 	}
