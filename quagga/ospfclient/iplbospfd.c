@@ -68,6 +68,7 @@ list_tail_data (struct list * list)
 {
 	return list->tail->data;
 }
+
 /*
  * vertex for calculating spf inclueing ECMP relay points.
  */
@@ -122,14 +123,31 @@ vertex_new (struct ospf_lsa * lsa)
 static void
 vertex_free (struct vertex * v)
 {
+	struct list * stack;
+	struct listnode * node;
+
 	list_delete (v->incoming);
 	list_delete (v->outgoing);
-	list_delete (v->stacks);
 
-	free (v);
+	for (ALL_LIST_ELEMENTS_RO (v->stacks, node, stack)) {
+		list_delete (stack);
+	}
+	list_delete (v->stacks);
 
 	return;
 }
+
+/*
+ * for iplb netlink
+ */
+#define IPLB_MAX_RELAYS	16
+
+struct iplb_relay {
+	struct in_addr network;	/* destination prefix */
+	struct in_addr netmask;
+	struct in_addr relay_point[IPLB_MAX_RELAYS];
+};
+#define IS_EMPTY_ADDR(a) ((a).s_addr == 0)
 
 /*
  * Calculate LSDB related
@@ -321,10 +339,10 @@ vertex_candidate_add_router (struct vertex * v, struct vertex * nei,
 		 */
 		nei->distance = v->distance + 1;
 
-		list_delete (nei->incoming);
 		for (ALL_LIST_ELEMENTS_RO (nei->incoming, node, vo)) {
 			listnode_delete (vo->outgoing, nei);
 		}
+		list_delete (nei->incoming);
 
 		listnode_add (nei->incoming, v);
 		listnode_add (v->outgoing, nei);
@@ -598,6 +616,8 @@ graph_dump (struct vertex_graph * graph)
 	struct list * stack;
 	struct listnode * node, * n1, * n2;
 
+	printf ("\nGRAPH DUMP\n");
+
 	for (rn = route_top (graph->rv_table); rn; rn = route_next (rn)) {
 		if (!rn->info) {
 			continue;
@@ -620,7 +640,6 @@ graph_dump (struct vertex_graph * graph)
 			}
 			printf ("]\n");
 		}
-		printf ("\n");
 	}
 }
 
@@ -670,6 +689,101 @@ iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 }
 
 
+static void
+vertex_to_iplb_relay (struct vertex * v, struct list * iplb_relays)
+{
+	int n, len, links;
+	struct router_lsa * rlsa;
+	struct router_lsa_link * llsa;
+	struct iplb_relay * ir;
+	struct vertex * r;
+	struct list * stack;
+	struct listnode * n1, * n2;
+
+	rlsa = (struct router_lsa *) v->lsa;
+
+	len = ntohs (v->lsa->length) - sizeof (struct lsa_header) - 4;
+	links = ntohs (rlsa->links);
+
+	for (llsa = (struct router_lsa_link *)rlsa->link; len > 0 && links > 0;
+	     len -= sizeof (struct router_lsa_link), links--) {
+		if (llsa->m[0].type != LSA_LINK_TYPE_STUB)
+			goto next;
+
+		for (ALL_LIST_ELEMENTS_RO (v->stacks, n1, stack)) {
+
+			ir = (struct iplb_relay *) malloc
+				(sizeof (struct iplb_relay));
+			memset (ir, 0, sizeof (struct iplb_relay));
+			ir->network = llsa->link_id;
+			ir->netmask = llsa->link_data;
+
+			n = 0;
+			for (ALL_LIST_ELEMENTS_RO (stack, n2, r)) {
+				ir->relay_point[n] = r->id;
+			}
+
+			listnode_add (iplb_relays, ir);
+		}
+	next:
+		llsa++;
+	}
+
+	return;
+}
+
+static struct list *
+gather_iplb_relays (struct vertex_graph * graph)
+{
+	struct vertex * v;
+	struct route_node * rn;
+	struct list * iplb_relays;
+
+	iplb_relays = list_new ();
+
+	for (rn = route_top (graph->rv_table); rn; rn = route_next (rn)) {
+		if (!rn->info)
+			continue;
+
+		v = rn->info;
+
+		vertex_to_iplb_relay (v, iplb_relays);
+	}
+
+	return iplb_relays;
+}
+
+static void
+iplb_relays_dump (struct list * iplb_relays)
+{
+	int n;
+	char ab1[16], ab2[16];
+	struct listnode * node;
+	struct iplb_relay * ir;
+
+	printf ("\nIPLB RELAY DUMP\n");
+
+	for (ALL_LIST_ELEMENTS_RO (iplb_relays, node, ir)) {
+		inet_ntop (AF_INET, &ir->network, ab1, sizeof (ab1));
+		inet_ntop (AF_INET, &ir->netmask, ab2, sizeof (ab2));
+		printf ("Destination prefix %s, %s\n", ab1, ab2);
+
+		printf ("    [ ");
+		for (n = 0; n < IPLB_MAX_RELAYS; n++) {
+			if (IS_EMPTY_ADDR (ir->relay_point[n]))
+				break;
+			printf ("%s ", inet_ntoa (ir->relay_point[n]));
+		}
+		printf ("]\n");
+	}
+}
+
+static void
+iplb_relays_destroy (struct list * iplb_relays)
+{
+	iplb_relays->del = free;
+	list_delete (iplb_relays);
+}
 
 /*
  * Callback functions for asyncronous events.
@@ -721,8 +835,9 @@ iplbospfd_lsa_read (struct thread * thread)
 {
 	int fd;
 	int ret;
-	struct vertex_graph graph;;
+	struct vertex_graph graph;
 	struct pollfd x[1];
+	struct list * iplb_relays;
 
 	oc = THREAD_ARG (thread);
 	fd = THREAD_FD (thread);
@@ -739,12 +854,17 @@ iplbospfd_lsa_read (struct thread * thread)
 	if (poll (x, 1, 0) == 0) {
 		/* no LSA message in the fd. re-compute LSDB ! */
 		D ("re-compute LSDB !!");
-		ospf_lsdb_dump (lsdb);
-		graph = iplb_relay_calculate (lsdb, adv_router);
 
+		ospf_lsdb_dump (lsdb);
+
+		graph = iplb_relay_calculate (lsdb, adv_router);
 		graph_dump (&graph);
 
+		iplb_relays = gather_iplb_relays (&graph);
+		iplb_relays_dump (iplb_relays);
+
 		vertex_graph_destroy (&graph);
+		iplb_relays_destroy (iplb_relays);
 	}
 
 	thread_add_read (master, iplbospfd_lsa_read, oc, fd);
