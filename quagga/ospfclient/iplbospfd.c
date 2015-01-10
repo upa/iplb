@@ -42,7 +42,7 @@ struct zebra_privs_t ospfd_privs = {
 #include "thread.h"
 #include "log.h"
 
-
+#define DEBUG
 
 struct in_addr adv_router = { 0, };	// The router for own node
 struct thread_master * master;
@@ -50,6 +50,24 @@ struct ospf_apiclient * oc;
 struct ospf_lsdb * lsdb;
 
 
+/* misc
+ */
+static void
+list_copy (struct list * src, struct list * dst)
+{
+	void * data;
+	struct listnode * node;
+
+	for (ALL_LIST_ELEMENTS_RO (src, node, data)) {
+		listnode_add (dst, data);
+	}
+}
+
+static void *
+list_tail_data (struct list * list)
+{
+	return list->tail->data;
+}
 /*
  * vertex for calculating spf inclueing ECMP relay points.
  */
@@ -307,7 +325,7 @@ vertex_candidate_add_router (struct vertex * v, struct vertex * nei,
 		for (ALL_LIST_ELEMENTS_RO (nei->incoming, node, vo)) {
 			listnode_delete (vo->outgoing, nei);
 		}
-		
+
 		listnode_add (nei->incoming, v);
 		listnode_add (v->outgoing, nei);
 
@@ -320,7 +338,13 @@ vertex_candidate_add_router (struct vertex * v, struct vertex * nei,
 		listnode_add (nei->incoming, v);
 		listnode_add (v->outgoing, nei);
 
-	} else if (nei->state == OSPF_VERTEX_VISITED && 
+	}
+
+#if 0
+	/* XXX: is threre a possibility that new ecmp link to VISITED vertex
+	 * is found on dijkstra algorithm ?
+	 */
+	else if (nei->state == OSPF_VERTEX_VISITED &&
 		   !listnode_lookup (nei->incoming, v) &&
 		   nei->distance == v->distance + 1) {
 		/* new ECMP link to visited vertex is found.
@@ -329,6 +353,7 @@ vertex_candidate_add_router (struct vertex * v, struct vertex * nei,
 		listnode_add (nei->incoming, v);
 		listnode_add (v->outgoing, nei);
 	}
+#endif
 
 	return;
 }
@@ -435,12 +460,54 @@ vertex_candidate_add (struct vertex * v, struct list * candidate,
 	return;
 }
 
+static int
+check_same_vertex_on_stacks (struct list * incoming)
+{
+	struct prefix_ls lp;
+	struct list * stack;
+	struct route_table * rt;
+	struct vertex * v, * r;
+	struct listnode * n1, * n2;
+	struct route_node * rn;
+
+	rt = route_table_init ();
+
+	for (ALL_LIST_ELEMENTS_RO (incoming, n1, v)) {
+		for (ALL_LIST_ELEMENTS_RO (v->stacks, n2, stack)) {
+			r = list_tail_data (stack);
+			if (r == NULL)
+				continue;
+
+			memset (&lp, 0, sizeof (struct prefix_ls));
+			lp.family = 0;
+			lp.prefixlen = 64;
+			lp.id = r->lsa->id;
+			lp.adv_router = r->lsa->adv_router;
+
+			rn = route_node_get (rt, (struct prefix *) &lp);
+			if (!rn) {
+				/* same vertex found !! */
+				route_table_finish (rt);
+				return 1;
+			}
+			rn->info = r;
+		}
+	}
+
+	route_table_finish (rt);
+
+	return 0;
+}
+
 static struct vertex *
 vertex_candidate_decide (struct list * candidate)
 {
+	int ecmped = 0, duplicated = 0;
 	u_int32_t distance = 0xFFFFFFFF;
 	struct vertex * v, * next;
-	struct listnode * node;
+	struct list * relays, * stack;
+	struct listnode * node, * nnode;
+
 
 	v = NULL;
 	next = NULL;
@@ -452,17 +519,63 @@ vertex_candidate_decide (struct list * candidate)
 		}
 	}
 
-	if (next) {
-		/* This candidate is decided.
-		 * mark visited, and create new link
-		 */
-		next->state = OSPF_VERTEX_VISITED;
-		listnode_delete (candidate, next);
+	if (!next)
+		return NULL;
+
+	/* This candidate is decided. mark visited. */
+	next->state = OSPF_VERTEX_VISITED;
+	listnode_delete (candidate, next);
+
+	/* copy relay point stacks. */
+	/* if incoming multiple incoming links exist, ECMPed vertex.
+	 * 1. if there is same vertex in top of multiple stacks,
+	      push incoming vertexes to each stacks.
+	 * 2. if stack of incoming vertex is null, push the incoming vertex.
+	 */
+
+	if (listcount (next->incoming) > 1)
+		ecmped = 1;
+
+	if (check_same_vertex_on_stacks (next->incoming))
+		duplicated = 1;
+
+#ifdef DEBUG
+	printf ("Next vertex is %s, ecmped=%d, duplicated=%d\n",
+		inet_ntoa (next->id), ecmped, duplicated);
+#endif
+
+	for (ALL_LIST_ELEMENTS_RO (next->incoming, node, v)) {
+		/* copy stacks */
+		for (ALL_LIST_ELEMENTS_RO (v->stacks, nnode, stack)) {
+			relays = list_new ();
+			list_copy (stack, relays);
+
+			if (ecmped && duplicated) {
+				/* ECMP, and term 1 is fulfilled !!
+				 * push vertex to relay points stack !!.
+				 */
+				listnode_add (relays, v);
+			}
+
+			listnode_add (next->stacks, relays);
+		}
+
+		if (ecmped && listcount (v->stacks) == 0) {
+			/* ECMP, and term 2 is fulfilled !!
+			 * push vertex to relay points stack !!.
+			 * (copy stack process does not run because
+			 * v->stacks * has 0 listnodes).
+			 */
+			relays = list_new ();
+			listnode_add (relays, v);
+			listnode_add (next->stacks, relays);
+		}
 	}
 
 	return next;
 }
 
+#ifdef DEBUG
 static void
 candidate_dump (struct list * candidate)
 {
@@ -475,13 +588,15 @@ candidate_dump (struct list * candidate)
 		D ("Vertex ID : %s", inet_ntoa (v->id));
 	}
 }
+#endif
 
 static void
 graph_dump (struct vertex_graph * graph)
 {
-	struct vertex * v;
+	struct vertex * v, * o, * r;
 	struct route_node * rn;
-	struct listnode * node, * next;
+	struct list * stack;
+	struct listnode * node, * n1, * n2;
 
 	for (rn = route_top (graph->rv_table); rn; rn = route_next (rn)) {
 		if (!rn->info) {
@@ -491,12 +606,21 @@ graph_dump (struct vertex_graph * graph)
 		v = rn->info;
 
 		printf ("Vertex: %s\n", inet_ntoa (v->id));
-		
-		for (node = v->outgoing->head; node; node = next) {
-			next = node->next;
-			v = node->data;
-			printf ("    -> %s\n", inet_ntoa (v->id));
+
+		for (ALL_LIST_ELEMENTS_RO (v->outgoing, node, o)) {
+			o = node->data;
+			printf ("         -> %s\n", inet_ntoa (o->id));
 		}
+
+		printf ("    Relay Points\n");
+		for (ALL_LIST_ELEMENTS_RO (v->stacks, n1, stack)) {
+			printf ("        [ ");
+			for (ALL_LIST_ELEMENTS_RO (stack, n2, r)) {
+				printf ("%s ", inet_ntoa (r->id));
+			}
+			printf ("]\n");
+		}
+		printf ("\n");
 	}
 }
 
@@ -528,12 +652,12 @@ iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 
 	listnode_add (candidate, root);
 
-
-
 	while (listcount (candidate)) {
 
+#ifdef DEBUG
 		D ("candidate count is %d", listcount (candidate));
 		candidate_dump (candidate);
+#endif
 
 
 		v = vertex_candidate_decide (candidate);
