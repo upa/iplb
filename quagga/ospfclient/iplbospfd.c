@@ -2,6 +2,7 @@
 
 #include <poll.h>
 #include <unistd.h>
+#include <linux/genetlink.h>
 
 #include <zebra.h>
 #include "prefix.h"	/* needed by ospf_asbr.h */
@@ -19,6 +20,10 @@
 #include "ospfd/ospf_api.h"
 #include "ospf_apiclient.h"
 
+#include "libnetlink.h"
+#include "libgenl.h"
+#include "../../iplb_netlink.h"
+
 /* copied from nm_util.h */
 #define D(format, ...)                                  \
         fprintf(stderr, "%s [%d] " format "\n",         \
@@ -26,6 +31,12 @@
 
 #define ASYNCPORT	4000
 
+/* netlink related.
+ */
+
+#define NLREQ_SIZE	1024
+static struct rtnl_handle genl_rth;
+static int genl_family = -1;
 
 
 /* privilages struct.
@@ -48,6 +59,7 @@ struct in_addr adv_router = { 0, };	// The router for own node
 struct thread_master * master;
 struct ospf_apiclient * oc;
 struct ospf_lsdb * lsdb;
+int enable_iplb = 0;
 
 
 /* misc
@@ -786,6 +798,96 @@ iplb_relays_destroy (struct list * iplb_relays)
 }
 
 /*
+ * functions to controll iplb kernel module
+ */
+
+static void
+netlink_socket_init (void)
+{
+	/* setup rtnl_handle */
+	if (rtnl_open_byproto (&genl_rth, 0, NETLINK_GENERIC) < 0)  {
+		D ("can not open genetlink socket");
+		exit (1);
+	}
+
+	genl_family = genl_resolve_family (&genl_rth, IPLB_GENL_NAME);
+	if (genl_family < 0) {
+		D ("can not resolve genl name \"%s\"", IPLB_GENL_NAME);
+		exit (1);
+	}
+}
+
+static void
+netlink_socket_destroy (void)
+{
+	rtnl_close (&genl_rth);
+	genl_family = -1;
+}
+
+static int
+mask2len (struct in_addr netmask)
+{
+	int n;
+	__u32 mask = 0x00000000;
+
+	for (n = 0; n <= 32; n++) {
+		if (ntohl (netmask.s_addr) == mask)
+			return n;
+
+		mask = (mask >> 1) | 0x80000000;
+	}
+
+	return 0;
+}
+
+static int
+iplb_relay_install (struct iplb_relay * ir)
+{
+	int prefix_len;
+	char ab1[16], ab2[16];
+
+	prefix_len = mask2len (ir->netmask);
+
+	/* XXX: now, only 1 relay point is allowed.
+	 * should support multiple relay points using multiple encap.
+	 */
+	if (!IS_EMPTY_ADDR (ir->relay_point[1])) {
+		D ("number of relay count must be 1.");
+		return -1;
+	}
+
+
+	inet_ntop (AF_INET, &ir->network, ab1, sizeof (ab1));
+	inet_ntop (AF_INET, ir->relay_point, ab2, sizeof (ab2));
+	D ("install %s/%d -> %s", ab1, prefix_len, ab2);
+
+	GENL_REQUEST (req, NLREQ_SIZE, genl_family, 0, IPLB_GENL_VERSION,
+		      IPLB_CMD_RELAY4_ADD, NLM_F_REQUEST | NLM_F_ACK);
+
+	addattr8 (&req.n, NLREQ_SIZE, IPLB_ATTR_PREFIX_LENGTH, prefix_len);
+	addattr32 (&req.n, NLREQ_SIZE, IPLB_ATTR_PREFIX4, ir->network.s_addr);
+	addattr32 (&req.n, NLREQ_SIZE, IPLB_ATTR_RELAY4,
+		   ir->relay_point[0].s_addr);
+
+	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
+		return -2;
+
+	return 1;
+}
+
+static int
+iplb_relay_flush (void)
+{
+	GENL_REQUEST (req, NLREQ_SIZE, genl_family, 0, IPLB_GENL_VERSION,
+		      IPLB_CMD_PREFIX4_FLUSH, NLM_F_REQUEST | NLM_F_ACK);
+
+	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
+		return -2;
+
+	return 1;
+}
+
+/*
  * Callback functions for asyncronous events.
  */
 
@@ -838,6 +940,8 @@ iplbospfd_lsa_read (struct thread * thread)
 	struct vertex_graph graph;
 	struct pollfd x[1];
 	struct list * iplb_relays;
+	struct iplb_relay * ir;
+	struct listnode * node;
 
 	oc = THREAD_ARG (thread);
 	fd = THREAD_FD (thread);
@@ -862,6 +966,14 @@ iplbospfd_lsa_read (struct thread * thread)
 
 		iplb_relays = gather_iplb_relays (&graph);
 		iplb_relays_dump (iplb_relays);
+
+		/* install iplb entires */
+		if (enable_iplb) {
+			iplb_relay_flush ();
+			for (ALL_LIST_ELEMENTS_RO (iplb_relays, node, ir)) {
+				iplb_relay_install (ir);
+			}
+		}
 
 		vertex_graph_destroy (&graph);
 		iplb_relays_destroy (iplb_relays);
@@ -915,6 +1027,7 @@ usage ()
 	printf ("usage: iplbospfd\n"
 		"\t -s : ospfd api server address\n"
 		"\t -r : router id for root of psf tree\n"
+		"\t -i : enable iplb\n"
 		);
 	
 	return;
@@ -932,7 +1045,7 @@ main (int argc, char ** argv)
 
 	lsdb = ospf_lsdb_new ();
 
-	while ((ch = getopt (argc, argv, "s:r:")) != -1) {
+	while ((ch = getopt (argc, argv, "s:r:i")) != -1) {
 		switch (ch) {
 		case 's' :
 			apisrv = optarg;
@@ -942,6 +1055,9 @@ main (int argc, char ** argv)
 				D ("invalid adv router %s", optarg);
 				return 1;
 			}
+			break;
+		case 'i' :
+			enable_iplb = 1;
 			break;
 		default :
 			usage ();
@@ -953,9 +1069,14 @@ main (int argc, char ** argv)
 		D ("-s api server must be specified");
 		return 1;
 	}
+
 	if (adv_router.s_addr == 0) {
 		D ("-r router id for root of tree must be specified");
 		return 1;
+	}
+
+	if (enable_iplb) {
+		netlink_socket_init ();
 	}
 
 	oc = ospf_apiclient_connect (apisrv, ASYNCPORT);
@@ -979,5 +1100,8 @@ main (int argc, char ** argv)
 	}
 
 	/* not reached */
+
+	netlink_socket_destroy ();
+
 	return 0;
 }
