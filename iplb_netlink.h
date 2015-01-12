@@ -34,6 +34,7 @@
  * LOOKUP_WEIGHTBASE	- none : set lookup function weightbase
  * LOOKUP_HASHTBASE	- none : set lookup function hashbase
  *
+ * PREFIX_FLUSH		- none : remove all prefix and relay info
  */
 
 enum {
@@ -64,6 +65,9 @@ enum {
 	IPLB_CMD_LOOKUP_WEIGHTBASE,
 	IPLB_CMD_LOOKUP_HASHBASE,
 	IPLB_CMD_LOOKUP_FLOWBASE,
+
+	IPLB_CMD_PREFIX4_FLUSH,
+	IPLB_CMD_PREFIX6_FLUSH,
 
 	__IPLB_CMD_MAX,
 };

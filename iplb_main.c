@@ -138,6 +138,7 @@ struct relay_addr {
 struct relay_tuple {
 	struct list_head	list;		/* private */
 
+	patricia_node_t		* patricia;	/* patricia node */
 	prefix_t		* prefix;	/* prefix of route table */
 
 	u32			weight_sum;	
@@ -330,6 +331,7 @@ add_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 						GFP_KERNEL);
 	memset (tuple, 0, sizeof (struct relay_tuple));
 
+	tuple->patricia		= pn;
 	tuple->prefix		= prefix;
 	tuple->weight_sum	= 0;
 	tuple->relay_count	= 0;
@@ -363,6 +365,8 @@ destroy_relay_tuple (struct relay_tuple * tuple)
 		list_del_rcu (p);
 		kfree_rcu (relay, rcu);
 	}
+
+	list_del_rcu (&tuple->list);
 
 	kfree (tuple);
 
@@ -1808,7 +1812,7 @@ iplb_nl_cmd_prefix4_get (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_prefix4_dump (struct sk_buff * skb, struct netlink_callback * cb)
 {
-	int 		n = 0, idx = cb->args[0];
+	int n = 0, idx = cb->args[0];
 	struct relay_tuple * tuple;
 
 	list_for_each_entry_rcu (tuple, &rtable4.rlist, list) {
@@ -2201,7 +2205,50 @@ iplb_nl_cmd_lookup_flowbase (struct sk_buff * skb, struct genl_info * info)
 	return 0;
 }
 
+static int
+iplb_nl_cmd_prefix4_flush (struct sk_buff * skb, struct genl_info * info)
+{
+	struct list_head *p, *tmp;
+	struct relay_tuple * tuple;
 
+	/* XXX:
+	 * Clear_Patricia() can be use. but after Clear_Patricia() called,
+	 * patricia_lookup() causes NULL pointer dereference...
+	 */
+
+	write_lock_bh (&rtable4.lock);
+
+	list_for_each_safe (p, tmp, &rtable4.rlist) {
+		tuple = list_entry (p, struct relay_tuple, list);
+		list_del (p);
+		patricia_remove (rtable4.rtable, tuple->patricia);
+		kfree (tuple);
+	}
+
+	write_unlock_bh (&rtable4.lock);
+
+	return 0;
+}
+
+static int
+iplb_nl_cmd_prefix6_flush (struct sk_buff * skb, struct genl_info * info)
+{
+	struct list_head *p, *tmp;
+	struct relay_tuple * tuple;
+
+	write_lock_bh (&rtable6.lock);
+
+	list_for_each_safe (p, tmp, &rtable6.rlist) {
+		tuple = list_entry (p, struct relay_tuple, list);
+		list_del (p);
+		patricia_remove (rtable4.rtable, tuple->patricia);
+		kfree (tuple);
+	}
+
+	write_unlock_bh (&rtable6.lock);
+
+	return 0;
+}
 
 static struct genl_ops iplb_nl_ops[] = {
 	{
@@ -2322,6 +2369,18 @@ static struct genl_ops iplb_nl_ops[] = {
 	{
 		.cmd	= IPLB_CMD_LOOKUP_FLOWBASE,
 		.doit	= iplb_nl_cmd_lookup_flowbase,
+		.policy	= iplb_nl_policy,
+//		.flags	= GENL_ADMIN_PERM,
+	},
+	{
+		.cmd	= IPLB_CMD_PREFIX4_FLUSH,
+		.doit	= iplb_nl_cmd_prefix4_flush,
+		.policy	= iplb_nl_policy,
+//		.flags	= GENL_ADMIN_PERM,
+	},
+	{
+		.cmd	= IPLB_CMD_PREFIX6_FLUSH,
+		.doit	= iplb_nl_cmd_prefix6_flush,
 		.policy	= iplb_nl_policy,
 //		.flags	= GENL_ADMIN_PERM,
 	},

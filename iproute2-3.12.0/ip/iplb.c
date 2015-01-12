@@ -273,7 +273,9 @@ usage (void)
 		 "\n"
 		 "       ip lb show [ detail ] \n"
 		 "\n"
-		 "       ip lb flow { show [ detail ] | flush }"
+		 "       ip lb flow { show [ detail ] }"
+		 "\n"
+		 "       ip lb flush [ flow ]\n"
 		 "\n"
 		);
 
@@ -1088,6 +1090,46 @@ do_flow (int argc, char ** argv)
 	return -1;
 }
 
+static int
+do_prefix_flush (void)
+{
+	int cmd;
+
+	switch (preferred_family) {
+	case AF_UNSPEC :
+	case AF_INET :
+		cmd = IPLB_CMD_PREFIX4_FLUSH;
+		break;
+	case AF_INET6 :
+		cmd = IPLB_CMD_PREFIX6_FLUSH;
+		break;
+	default :
+		fprintf (stderr, "%s: invalid family \"%d\"\n",
+			 __func__, preferred_family);
+		return -1;
+	}
+
+	GENL_REQUEST (req, 1024, genl_family, 0, IPLB_GENL_VERSION,
+		      cmd, NLM_F_REQUEST | NLM_F_ACK);
+
+	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
+		return -2;
+
+	return 0;
+}
+
+static int
+do_flush (int argc, char ** argv)
+{
+	if (argc && matches (*argv, "flow") == 0) {
+		return do_flow_flush ();
+	} else {
+		return do_prefix_flush ();
+	}
+
+	return -1;
+}
+
 int
 do_iplb (int argc, char ** argv)
 {
@@ -1122,6 +1164,9 @@ do_iplb (int argc, char ** argv)
 
 	if (matches (*argv, "flow") == 0)
 		return do_flow (argc - 1, argv + 1);
+
+	if (matches (*argv, "flush") == 0)
+		return do_flush (argc - 1, argv + 1);
 
 	if (matches (*argv, "help") == 0)
 		usage ();
