@@ -890,11 +890,10 @@ _ipv4_set_gre_encap (struct sk_buff * skb, __be32 * addr)
 
 	ipiph->version	= IPVERSION;
 	ipiph->ihl	= sizeof (struct iphdr) >> 2;
-	ipiph->tos	= 0;
+	ipiph->tos	= iph->tos;
+	ipiph->id	= iph->id;
 	ipiph->frag_off	= 0;
 	ipiph->ttl	= 16;
-
-
 	ipiph->tot_len	= htons (ntohs (iph->tot_len)
 				 + sizeof (struct grehdr)
 				 + sizeof (struct iphdr));
@@ -943,7 +942,8 @@ _ipv4_set_ipip_encap (struct sk_buff * skb, __be32 * addr)
 
 	ipiph->version	= IPVERSION;
 	ipiph->ihl	= sizeof (struct iphdr) >> 2;
-	ipiph->tos	= 0;
+	ipiph->tos	= iph->tos;
+	ipiph->id	= iph->id;
 	ipiph->frag_off	= 0;
 	ipiph->ttl	= 16;
 	ipiph->tot_len	= htons (ntohs (iph->tot_len) + sizeof (struct iphdr));
