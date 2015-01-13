@@ -365,50 +365,32 @@ destroy_relay_tuple (struct relay_tuple * tuple)
 
 	list_for_each_safe (p, tmp, &tuple->relay_list) {
 		relay = list_entry (p, struct relay_addr, list);
-		list_del_rcu (p);
+		list_del_rcu (&relay->list);
 		kfree_rcu (relay, rcu);
 	}
 
-	list_del_rcu (&tuple->list);
+	kfree (tuple->prefix);
 
+	list_del_rcu (&tuple->list);
 	kfree_rcu (tuple, rcu);
 
 	return;
 }
 
 
-static int
-delete_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
+static void
+delete_relay_tuple (struct iplb_rtable * rt, struct relay_tuple * tuple)
 {
-	prefix_t		prefix;
-	patricia_node_t		* pn;
-	struct relay_tuple	* tuple;
-
-
-	dst2prefix (af, dst, len, &prefix);
-
 	write_lock_bh (&rt->lock);
-	pn = patricia_search_exact (rt->rtable, &prefix);
 
-	if (!pn) {
-		write_unlock_bh (&rt->lock);
-		return 0;
-	}
-
-	tuple = (struct relay_tuple *) pn->data;
-	
-	list_del_rcu (&tuple->list);
-
-	pn->data = NULL;
+	tuple->patricia->data = NULL;
+	patricia_remove (rt->rtable, tuple->patricia);
 	destroy_relay_tuple (tuple);
-	patricia_remove (rt->rtable, pn);
 
 	write_unlock_bh (&rt->lock);
 
-	return 1;
+	return;
 }
-
-
 
 static void
 add_relay_addr_to_tuple (struct relay_tuple * tuple, u8 af,
@@ -425,7 +407,7 @@ add_relay_addr_to_tuple (struct relay_tuple * tuple, u8 af,
 	relay->tuple	= tuple;
 	relay->family	= af;
 	relay->weight	= weight;
-	relay->encap_type	= encap_type;
+	relay->encap_type  = encap_type;
 	relay->relay_count = ir->relay_count;
 	relay->stats[0].pkt_count  = 0;
 	relay->stats[0].byte_count = 0;
@@ -454,10 +436,6 @@ add_relay_addr_to_tuple (struct relay_tuple * tuple, u8 af,
 		return;
 	}
 	
-	for (n = 0; n < ir->relay_count; n++) {
-		printk (KERN_INFO "%s: ir %pI4, relay %pI4\n", __func__,
-			ir->relay_ip4[n], relay->relay_ip4[n]);
-	}
 
 	/* XXX: this section should be implemented as critical section. */
 	for (idx = 1; idx < RELAY_TABLE_SIZE; idx++) {
@@ -531,7 +509,7 @@ is_same_relay_points (struct relay_addr * relay, struct iplb_relay * ir)
 	return 0;
 }
 
-static void
+static int
 delete_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af,
 			      struct iplb_relay * ir)
 {
@@ -545,13 +523,13 @@ delete_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af,
 			tuple->weight_sum -= relay->weight;
 			tuple->relay_count--;
 			tuple->relay_table[relay->index] = NULL;
-			list_del_rcu (p);
+			list_del_rcu (&relay->list);
 			kfree_rcu (relay, rcu);
-			return;
+			return 1;
 		}
 	}
 
-	return;
+	return 0;
 }
 
 static struct relay_addr *
@@ -1492,7 +1470,6 @@ iplb_nl_cmd_prefix6_add (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_prefix4_delete (struct sk_buff * skb, struct genl_info * info)
 {
-	int		rc;
 	u8		length;
 	__be32		prefix;
 	struct relay_tuple * tuple;
@@ -1514,9 +1491,7 @@ iplb_nl_cmd_prefix4_delete (struct sk_buff * skb, struct genl_info * info)
 	if (!tuple)
 		return -ENOENT;
 
-	rc = delete_relay_tuple (&rtable4, AF_INET, &prefix, length);
-	if (!rc)
-		return -ENOENT;
+	delete_relay_tuple (&rtable4, tuple);
 
 	return 0;
 }
@@ -1524,7 +1499,6 @@ iplb_nl_cmd_prefix4_delete (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_prefix6_delete (struct sk_buff * skb, struct genl_info * info)
 {
-	int		rc;
 	u8		length;
 	struct in6_addr	prefix;
 	struct relay_tuple * tuple;
@@ -1553,9 +1527,7 @@ iplb_nl_cmd_prefix6_delete (struct sk_buff * skb, struct genl_info * info)
 	if (!tuple)
 		return -ENOENT;
 
-	rc = delete_relay_tuple (&rtable6, AF_INET6, &prefix, length);
-	if (!rc)
-		return -ENOENT;
+	delete_relay_tuple (&rtable6, tuple);
 
 	return 0;
 }
@@ -1658,6 +1630,7 @@ iplb_nl_cmd_relay6_add (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_relay4_delete (struct sk_buff * skb, struct genl_info * info)
 {
+	int		ret;
 	u8		length;
 	__be32		prefix;
 	struct iplb_relay ir;
@@ -1687,10 +1660,12 @@ iplb_nl_cmd_relay4_delete (struct sk_buff * skb, struct genl_info * info)
 	if (!tuple)
 		return -ENOENT;
 
-	delete_relay_addr_from_tuple (tuple, AF_INET, &ir);
+	ret = delete_relay_addr_from_tuple (tuple, AF_INET, &ir);
+	if (!ret)
+		return -ENOENT;
 
 	if (tuple->relay_count == 0) {
-		delete_relay_tuple (&rtable4, AF_INET, &prefix, length);
+		delete_relay_tuple (&rtable4, tuple);
 	}
 
 	return 0;
@@ -1699,6 +1674,7 @@ iplb_nl_cmd_relay4_delete (struct sk_buff * skb, struct genl_info * info)
 static int
 iplb_nl_cmd_relay6_delete (struct sk_buff * skb, struct genl_info * info)
 {
+	int		ret;
 	u8		length;
 	struct in6_addr	prefix;
 	struct iplb_relay ir;
@@ -1728,10 +1704,12 @@ iplb_nl_cmd_relay6_delete (struct sk_buff * skb, struct genl_info * info)
 	if (!tuple)
 		return -ENOENT;
 
-	delete_relay_addr_from_tuple (tuple, AF_INET6, &ir);
+	ret = delete_relay_addr_from_tuple (tuple, AF_INET6, &ir);
+	if (!ret)
+		return -ENOENT;
 
 	if (tuple->relay_count == 0) {
-		delete_relay_tuple (&rtable6, AF_INET6, &prefix, length);
+		delete_relay_tuple (&rtable6, tuple);
 	}
 
 	return 0;
@@ -2312,16 +2290,10 @@ iplb_nl_cmd_prefix4_flush (struct sk_buff * skb, struct genl_info * info)
 	 * patricia_lookup() causes NULL pointer dereference...
 	 */
 
-	write_lock_bh (&rtable4.lock);
-
 	list_for_each_safe (p, tmp, &rtable4.rlist) {
 		tuple = list_entry (p, struct relay_tuple, list);
-		list_del_rcu (p);
-		patricia_remove (rtable4.rtable, tuple->patricia);
-		kfree_rcu (tuple, rcu);
+		delete_relay_tuple (&rtable4, tuple);
 	}
-
-	write_unlock_bh (&rtable4.lock);
 
 	return 0;
 }
