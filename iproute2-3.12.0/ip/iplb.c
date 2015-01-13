@@ -82,6 +82,7 @@ split_prefixlen (char * str, void * prefix, __u8 * length)
 	int n, len, family;
 	char * p, * pp, * lp, addrbuf[64];
 	
+	lp = NULL;
 	p = pp = addrbuf;
 	strncpy (addrbuf, str, sizeof (addrbuf));
 
@@ -92,6 +93,10 @@ split_prefixlen (char * str, void * prefix, __u8 * length)
 		}
 	}
 
+	if (!lp) {
+		/* no prefix "/" */
+		return 0;
+	}
 	len = atoi (lp);
 
 	if (inet_pton (AF_INET, pp, prefix) > 0) {
@@ -118,13 +123,13 @@ strsplit(char *str, char *args[], int max)
 	int argc;
 	char *c;
 
-	for (argc = 0, c = str; *c == ' ' || *c == '\t' || *c == '\n'; c++)
-		;
+	for (argc = 0, c = str; *c == ' ' || *c == '\t' || *c == '\n'; c++);
+
 	while (*c && argc < max) {
 		args[argc++] = c;
 		while (*c && *c != ',')
 			c++;
-		while (*c && *c <= ' ')
+		while (*c && *c == ',')
 			*c++ = '\0';
 	}
 
@@ -359,7 +364,7 @@ relay_string_to_iplb_relay (char * relay, struct iplb_relay * ir)
 			rt = inet_pton (AF_INET, relays[n], ir->relay_ip4[n]);
 			if (rt < 1) {
 				fprintf (stderr, "invalid relay address "
-					 "\"%s\"", relays[n]);
+					 "\"%s\"\n", relays[n]);
 				return 0;
 			}
 			break;
@@ -367,11 +372,13 @@ relay_string_to_iplb_relay (char * relay, struct iplb_relay * ir)
 			rt = inet_pton (AF_INET6, relays[n], ir->relay_ip6[n]);
 			if (rt < 1) {
 				fprintf (stderr, "invalid relay address "
-					 "\"%s\"", relays[n]);
+					 "\"%s\"\n", relays[n]);
 				return 0;
 			}
 		}
 	}
+
+	ir->relay_count = relay_count;
 
 	return relay_count;
 }
@@ -742,7 +749,7 @@ print_iplb_relay (int family, struct iplb_relay * ir)
 	char ab[64];
 
 	if (ir->relay_count == 0) {
-		fprintf (stdout, "none");
+		fprintf (stdout, "none ");
 		return;
 	}
 
@@ -829,7 +836,7 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 	if (attrs[IPLB_ATTR_WEIGHT]) {
 		weight = rta_getattr_u8 (attrs[IPLB_ATTR_WEIGHT]);
 	} else {
-		fprintf (stderr, "%s: weight does not exist\n", 
+		fprintf (stderr, "%s: weight does not exist\n",
 			 __func__);
 		return -1;
 	}
@@ -864,10 +871,10 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 
 	fprintf (stdout, "prefix %s/%d relay ", addrbuf, length);
 	print_iplb_relay (ai_family, &ir);
-	fprintf (stdout, "weight %d type %s index %u\n",
+	fprintf (stdout, "weight %d type %s index %u",
 		 weight, encap_type_name[encap_type], index);
 
-	if (show_p.detail_flag) {
+	if (!show_p.detail_flag) {
 		fprintf (stdout, "\n");
 	} else {
 		fprintf (stdout, " txpkt %u txbyte %u\n",
