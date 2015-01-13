@@ -91,8 +91,8 @@ enum {
 	IPLB_ATTR_PREFIX4,		/* 32 bit	*/
 	IPLB_ATTR_PREFIX6,		/* 128 bit	*/
 	IPLB_ATTR_PREFIX_LENGTH,	/* 8 bit	*/
-	IPLB_ATTR_RELAY4,		/* 32 bit 	*/
-	IPLB_ATTR_RELAY6,		/* 128 bit	*/
+	IPLB_ATTR_RELAY4,		/* binary 	*/
+	IPLB_ATTR_RELAY6,		/* binary	*/
 	IPLB_ATTR_RELAY_INDEX,		/* 8bit		*/
 	IPLB_ATTR_WEIGHT,		/* 8 bit 	*/
 	IPLB_ATTR_ENCAP_TYPE,		/* 8 bit	*/
@@ -105,6 +105,21 @@ enum {
 };
 
 #define IPLB_ATTR_MAX	(__IPLB_ATTR_MAX - 1)
+
+#define IPLB_MAX_RELAY_POINTS	16
+
+
+/* relay address structure  */
+/* content of IPLB_ATTR_RELAY4 */
+struct iplb_relay {
+	__u32	relay_count;
+        union {
+		__be32	__relay_addr4[IPLB_MAX_RELAY_POINTS][1];
+		__be32	__relay_addr6[IPLB_MAX_RELAY_POINTS][4];
+	} relay_ip;     /* relay point(s) */
+};
+#define relay_ip4       relay_ip.__relay_addr4
+#define relay_ip6       relay_ip.__relay_addr6
 
 
 /* counter structure */
