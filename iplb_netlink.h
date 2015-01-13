@@ -91,8 +91,7 @@ enum {
 	IPLB_ATTR_PREFIX4,		/* 32 bit	*/
 	IPLB_ATTR_PREFIX6,		/* 128 bit	*/
 	IPLB_ATTR_PREFIX_LENGTH,	/* 8 bit	*/
-	IPLB_ATTR_RELAY4,		/* binary 	*/
-	IPLB_ATTR_RELAY6,		/* binary	*/
+	IPLB_ATTR_RELAY,		/* binary 	*/
 	IPLB_ATTR_RELAY_INDEX,		/* 8bit		*/
 	IPLB_ATTR_WEIGHT,		/* 8 bit 	*/
 	IPLB_ATTR_ENCAP_TYPE,		/* 8 bit	*/

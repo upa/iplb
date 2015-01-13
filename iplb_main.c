@@ -550,14 +550,15 @@ delete_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af,
 }
 
 static struct relay_addr *
-find_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af, void * addr)
+find_relay_addr_from_tuple (struct relay_tuple * tuple, u8 af,
+			    struct iplb_relay * ir)
 {
 	struct relay_addr * relay;
 
 	relay = NULL;
 
 	list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
-		if (ADDRCMP (af, &relay->relay_ip, addr))
+		if (is_same_relay_points (relay, ir))
 			return relay;
 	}
 
@@ -1385,17 +1386,13 @@ static struct genl_family iplb_nl_family = {
 	.maxattr	= IPLB_ATTR_MAX,
 };
 
-/* XXX: IPLB_ATTR_RELAY4 and RELAY6 shoud be merged */
 static struct nla_policy iplb_nl_policy[IPLB_ATTR_MAX + 1] = {
 	[IPLB_ATTR_NONE]		= { .type = NLA_UNSPEC, },
 	[IPLB_ATTR_PREFIX4]		= { .type = NLA_U32, },
 	[IPLB_ATTR_PREFIX6]		= { .type = NLA_BINARY,
 					    .len = sizeof (struct in6_addr), },
 	[IPLB_ATTR_PREFIX_LENGTH]	= { .type = NLA_U8, },
-	[IPLB_ATTR_RELAY4]		= { .type = NLA_BINARY,
-					    .len =  sizeof
-					    (struct iplb_relay), },
-	[IPLB_ATTR_RELAY6]		= { .type = NLA_BINARY,
+	[IPLB_ATTR_RELAY]		= { .type = NLA_BINARY,
 					    .len =  sizeof
 					    (struct iplb_relay), },
 	[IPLB_ATTR_RELAY_INDEX]		= { .type = NLA_U8,},
@@ -1575,11 +1572,11 @@ iplb_nl_cmd_relay4_add (struct sk_buff * skb, struct genl_info * info)
 	}
 	length = nla_get_u8 (info->attrs[IPLB_ATTR_PREFIX_LENGTH]);
 
-	if (!info->attrs[IPLB_ATTR_RELAY4]) {
+	if (!info->attrs[IPLB_ATTR_RELAY]) {
 		pr_debug ("%s: relay addr is not specified\n", __func__);
 		return -EINVAL;
 	}
-	nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY4],
+	nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY],
 		    sizeof (struct iplb_relay));
 
 	if (!info->attrs[IPLB_ATTR_WEIGHT]) {
@@ -1623,11 +1620,11 @@ iplb_nl_cmd_relay6_add (struct sk_buff * skb, struct genl_info * info)
 	}
 	length = nla_get_u8 (info->attrs[IPLB_ATTR_PREFIX_LENGTH]);
 
-	if (!info->attrs[IPLB_ATTR_RELAY6]) {
+	if (!info->attrs[IPLB_ATTR_RELAY]) {
 		pr_debug ("%s: relay addr is not specified\n", __func__);
 		return -EINVAL;
 	}
-	nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY6],
+	nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY],
 		    sizeof (struct iplb_relay));
 
 	if (!info->attrs[IPLB_ATTR_WEIGHT]) {
@@ -1670,11 +1667,11 @@ iplb_nl_cmd_relay4_delete (struct sk_buff * skb, struct genl_info * info)
 	}
 	length = nla_get_u8 (info->attrs[IPLB_ATTR_PREFIX_LENGTH]);
 
-	if (!info->attrs[IPLB_ATTR_RELAY4]) {
+	if (!info->attrs[IPLB_ATTR_RELAY]) {
 		pr_debug ("%s: relay addr is not specified\n", __func__);
 		return -EINVAL;
 	}
-	nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY4],
+	nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY],
 		    sizeof (struct iplb_relay));
 
 
@@ -1711,11 +1708,11 @@ iplb_nl_cmd_relay6_delete (struct sk_buff * skb, struct genl_info * info)
 	}
 	length = nla_get_u8 (info->attrs[IPLB_ATTR_PREFIX_LENGTH]);
 
-	if (!info->attrs[IPLB_ATTR_RELAY6]) {
+	if (!info->attrs[IPLB_ATTR_RELAY]) {
 		pr_debug ("%s: relay addr is not specified\n", __func__);
 		return -EINVAL;
 	}
-	nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY6],
+	nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY],
 		    sizeof (struct iplb_relay));
 
 
@@ -1781,7 +1778,7 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 		     int cmd, struct relay_addr * relay)
 {
 	void * hdr;
-	int n, prefix_attr, relay_attr, addrlen;
+	int n, prefix_attr, addrlen;
 	struct iplb_relay ir;
 
 	if (!skb || !relay)
@@ -1797,12 +1794,10 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	switch (relay->family) {
 	case AF_INET :
 		prefix_attr = IPLB_ATTR_PREFIX4;
-		relay_attr = IPLB_ATTR_RELAY4;
 		addrlen = sizeof (struct in_addr);
 		break;
 	case AF_INET6 :
 		prefix_attr = IPLB_ATTR_PREFIX6;
-		relay_attr = IPLB_ATTR_RELAY6;
 		addrlen = sizeof (struct in6_addr);
 		break;
 	default :
@@ -1827,7 +1822,7 @@ iplb_nl_relay_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
 	if (nla_put (skb, prefix_attr, addrlen, &relay->tuple->prefix->add) ||
 	    nla_put_u8 (skb, IPLB_ATTR_PREFIX_LENGTH,
 			relay->tuple->prefix->bitlen) ||
-	    nla_put (skb, relay_attr, sizeof (struct iplb_relay), &ir) ||
+	    nla_put (skb, IPLB_ATTR_RELAY, sizeof (struct iplb_relay), &ir) ||
 	    nla_put_u8 (skb, IPLB_ATTR_WEIGHT, relay->weight) ||
 	    nla_put_u8 (skb, IPLB_ATTR_ENCAP_TYPE, relay->encap_type) ||
 	    nla_put (skb, IPLB_ATTR_STATS, sizeof (struct relay_addr),
@@ -2004,9 +1999,11 @@ iplb_nl_cmd_weight_set (struct sk_buff * skb, struct genl_info * info)
 {
 	u8	length, weight;
 	int	prefix_family, relay_family;
-	__be32	prefix[4], addr[4];
+	__be32	prefix[4];
+	struct iplb_relay ir;
 	struct relay_tuple * tuple;
 	struct relay_addr  * relay;
+
 	
 	length = weight = 0;
 	prefix_family = relay_family = 0;
@@ -2021,14 +2018,9 @@ iplb_nl_cmd_weight_set (struct sk_buff * skb, struct genl_info * info)
 		prefix_family = AF_INET6;
 	}
 
-	if (info->attrs[IPLB_ATTR_RELAY4]) {
-		addr[0] = nla_get_be32 (info->attrs[IPLB_ATTR_RELAY4]);
-		relay_family = AF_INET;
-	}
-	if (info->attrs[IPLB_ATTR_RELAY6]) {
-		nla_memcpy (addr, info->attrs[IPLB_ATTR_RELAY6],
-			    sizeof (relay));
-		relay_family = AF_INET6;
+	if (info->attrs[IPLB_ATTR_RELAY]) {
+		nla_memcpy (&ir, info->attrs[IPLB_ATTR_RELAY],
+			    sizeof (struct iplb_relay));
 	}
 
 	if (prefix_family != relay_family) {
@@ -2056,7 +2048,7 @@ iplb_nl_cmd_weight_set (struct sk_buff * skb, struct genl_info * info)
 	if (!tuple)
 		return -ENOENT;
 	
-	relay = find_relay_addr_from_tuple (tuple, relay_family, addr);
+	relay = find_relay_addr_from_tuple (tuple, relay_family, &ir);
 	
 	if (relay) {
 		tuple->weight_sum -= relay->weight;

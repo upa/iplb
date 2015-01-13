@@ -33,16 +33,13 @@ static int genl_family = -1;
 
 struct iplb_param {
 
+	char * relay;
+
 	union {
 		struct in_addr	prefix4;
 		struct in6_addr	prefix6;
 	} prefix;
 
-	union {
-		struct in_addr	relay4;
-		struct in6_addr	relay6;
-	} relay;
-	
 	union {
 		struct in_addr	src4;
 		struct in6_addr	src6;
@@ -58,7 +55,6 @@ struct iplb_param {
 	__u8	encap_type;
 
 	int	prefix_family;
-	int	relay_family;
 	int	weight_flag;
 	int	encap_type_flag;
 	int	src_family;
@@ -116,6 +112,25 @@ split_prefixlen (char * str, void * prefix, __u8 * length)
 	return family;
 }
 
+static int
+strsplit(char *str, char *args[], int max)
+{
+	int argc;
+	char *c;
+
+	for (argc = 0, c = str; *c == ' ' || *c == '\t' || *c == '\n'; c++)
+		;
+	while (*c && argc < max) {
+		args[argc++] = c;
+		while (*c && *c != ',')
+			c++;
+		while (*c && *c <= ' ')
+			*c++ = '\0';
+	}
+
+	return argc;
+}
+
 
 static int
 parse_args (int argc, char ** argv, struct iplb_param * p)
@@ -136,14 +151,7 @@ parse_args (int argc, char ** argv, struct iplb_param * p)
 			p->prefix_family = rc;
 		} else if (strcmp (*argv, "relay") == 0) {
 			NEXT_ARG ();
-			if (inet_pton (AF_INET, *argv, &p->relay) > 0)
-				p->relay_family = AF_INET;
-			else if (inet_pton (AF_INET6, *argv, &p->relay) > 0)
-				p->relay_family = AF_INET6;
-			else {
-				invarg ("invalid relay", *argv);
-				exit (-1);
-			}
+			p->relay = *argv;
 		} else if (strcmp (*argv, "weight") == 0) {
 			NEXT_ARG ();
 			if (get_u8 (&p->weight, *argv, 0)) {
@@ -249,7 +257,7 @@ usage (void)
 		 "\n"
 		 "Usage: ip lb [ { add | del } ]\n"
 		 "             [ prefix PREFIX/LEN ]\n"
-		 "             [ relay ADDRESS ]\n"
+		 "             [ relay ADDRESS,ADDRESS,ADDRESS ]\n"
 		 "             [ weight WEIGHT ]\n"
 		 "             [ type { gre | ipip | lsrr } ]\n"
 		 "\n"
@@ -323,23 +331,63 @@ do_add_prefix (struct iplb_param p)
 	return 0;
 }
 
+static int
+relay_string_to_iplb_relay (char * relay, struct iplb_relay * ir)
+{
+	int n, rt, family, relay_count;
+	char * relays[IPLB_MAX_RELAY_POINTS];
+
+	switch (preferred_family) {
+	case AF_UNSPEC :
+	case AF_INET :
+		family = AF_INET;
+		break;
+	case AF_INET6 :
+		family = AF_INET6;
+		break;
+	default :
+		fprintf (stderr, "%s: invalid family \"%d\"",
+			 __func__, preferred_family);
+		return 0;
+	}
+
+	relay_count = strsplit (relay, relays, IPLB_MAX_RELAY_POINTS);
+
+	for (n = 0; n < relay_count; n++) {
+		switch (family) {
+		case AF_INET :
+			rt = inet_pton (AF_INET, relays[n], ir->relay_ip4[n]);
+			if (rt < 1) {
+				fprintf (stderr, "invalid relay address "
+					 "\"%s\"", relays[n]);
+				return 0;
+			}
+			break;
+		case AF_INET6 :
+			rt = inet_pton (AF_INET6, relays[n], ir->relay_ip6[n]);
+			if (rt < 1) {
+				fprintf (stderr, "invalid relay address "
+					 "\"%s\"", relays[n]);
+				return 0;
+			}
+		}
+	}
+
+	return relay_count;
+}
 
 static int
 do_add_relay (struct iplb_param p)
 {
-	int cmd;
+	int cmd, ret;
 	__u8 weight;
+	struct iplb_relay ir;
 
 	if (!p.prefix_family) {
 		fprintf (stderr, "prefix is not specified\n");
 		exit (-1);
 	}
 	
-	if (p.prefix_family != p.relay_family) {
-		fprintf (stderr, "protocol family mismatch\n");
-		exit (-1);
-	}
-
 	weight = p.weight_flag ? p.weight : 100; /* default value of weight */
 
 	cmd = (p.prefix_family == AF_INET) ?
@@ -366,16 +414,13 @@ do_add_relay (struct iplb_param p)
 
 	addattr8 (&req.n, 1024, IPLB_ATTR_PREFIX_LENGTH, p.length);
 
-	switch (p.relay_family) {
-	case AF_INET :
-		addattr32 (&req.n, 1024, IPLB_ATTR_RELAY4,
-			   *((__u32 *)&p.relay));
-		break;
-	case AF_INET6:
-		addattr_l (&req.n, 1024, IPLB_ATTR_RELAY6,
-			   &p.relay, sizeof (struct in6_addr));
-		break;
+	memset (&ir, 0, sizeof (struct iplb_relay));
+	ret = relay_string_to_iplb_relay (p.relay, &ir);
+	if (!ret) {
+		return -1;
 	}
+	addattr_l (&req.n, 1024, IPLB_ATTR_RELAY, &ir,
+		   sizeof (struct iplb_relay));
 
 	addattr8 (&req.n, 1024, IPLB_ATTR_WEIGHT, weight);
 
@@ -397,9 +442,9 @@ do_add (int argc, char ** argv)
 
 	parse_args (argc, argv, &p);
 
-	if (p.prefix_family && ! p.relay_family)
+	if (p.prefix_family && ! p.relay)
 		return do_add_prefix (p);
-	else if (p.prefix_family && p.relay_family)
+	else if (p.prefix_family && p.relay)
 		return do_add_relay (p);
 	else
 		fprintf (stdout, "invalid arguments\n");
@@ -450,18 +495,14 @@ do_del_prefix (struct iplb_param p)
 static int
 do_del_relay (struct iplb_param p)
 {
-	int cmd;
+	int cmd, ret;
+	struct iplb_relay ir;
 
 	if (!p.prefix_family) {
 		fprintf (stderr, "prefix is not specified\n");
 		exit (-1);
 	}
 	
-	if (p.prefix_family != p.relay_family) {
-		fprintf (stderr, "protocol family mismatch\n");
-		exit (-1);
-	}
-
 	cmd = (p.prefix_family == AF_INET) ? 
 		IPLB_CMD_RELAY4_DELETE : IPLB_CMD_RELAY6_DELETE;
 
@@ -485,16 +526,14 @@ do_del_relay (struct iplb_param p)
 
 	addattr8 (&req.n, 1024, IPLB_ATTR_PREFIX_LENGTH, p.length);
 
-	switch (p.relay_family) {
-	case AF_INET :
-		addattr32 (&req.n, 1024, IPLB_ATTR_RELAY4,
-			   *((__u32 *)&p.relay));
-		break;
-	case AF_INET6:
-		addattr_l (&req.n, 1024, IPLB_ATTR_RELAY6,
-			   &p.relay, sizeof (struct in6_addr));
-		break;
+	memset (&ir, 0, sizeof (struct iplb_relay));
+	ret = relay_string_to_iplb_relay (p.relay, &ir);
+	if (!ret) {
+		return -1;
 	}
+	addattr_l (&req.n, 1024, IPLB_ATTR_RELAY, &ir,
+		   sizeof (struct iplb_relay));
+
 
 	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
 		return -2;
@@ -509,9 +548,9 @@ do_del (int argc, char ** argv)
 
 	parse_args (argc, argv, &p);
 
-	if (p.prefix_family && ! p.relay_family)
+	if (p.prefix_family && ! p.relay)
 		return do_del_prefix (p);
-	else if (p.prefix_family && p.relay_family)
+	else if (p.prefix_family && p.relay)
 		return do_del_relay (p);
 	else
 		fprintf (stderr, "invalid arguments\n");
@@ -522,14 +561,11 @@ do_del (int argc, char ** argv)
 static int
 do_set_weight (int argc, char ** argv)
 {
+	int ret;
 	struct iplb_param p;
+	struct iplb_relay ir;
 
 	parse_args (argc, argv, &p);
-
-	if (p.prefix_family != p.relay_family) {
-		fprintf (stderr, "prefix and relay family mismatch\n");
-		exit (-1);
-	}
 
 	if (!p.weight_flag) {
 		fprintf (stderr, "weight is not specified\n");
@@ -543,20 +579,24 @@ do_set_weight (int argc, char ** argv)
 	case AF_INET :
 		addattr32 (&req.n, 1024, IPLB_ATTR_PREFIX4,
 			   *((__u32 *)&p.prefix));
-		addattr32 (&req.n, 1024, IPLB_ATTR_RELAY4,
-			   *((__u32 *)&p.relay));
 		break;
 	case AF_INET6 :
 		addattr_l (&req.n, 1024, IPLB_ATTR_PREFIX6,
 			   &p.prefix, sizeof (struct in6_addr));
-		addattr_l (&req.n, 1024, IPLB_ATTR_RELAY6,
-			   &p.relay, sizeof (struct in6_addr));
 		break;
 	default :
 		fprintf (stderr, "invalid prefix family %d\n",
 			 p.prefix_family);
 		exit (-1);
 	}
+
+	memset (&ir, 0, sizeof (struct iplb_relay));
+	ret = relay_string_to_iplb_relay (p.relay, &ir);
+	if (!ret) {
+		return -1;
+	}
+	addattr_l (&req.n, 1024, IPLB_ATTR_RELAY, &ir,
+		   sizeof (struct iplb_relay));
 
 	addattr8 (&req.n, 1024, IPLB_ATTR_PREFIX_LENGTH, p.length);
 	addattr8 (&req.n, 1024, IPLB_ATTR_WEIGHT, p.weight);
@@ -695,23 +735,55 @@ do_set (int argc, char ** argv)
 	return -1;
 }
 
+static void
+print_iplb_relay (int family, struct iplb_relay * ir)
+{
+	int n;
+	char ab[64];
+
+	if (ir->relay_count == 0) {
+		fprintf (stdout, "none");
+		return;
+	}
+
+	for (n = 0; n < ir->relay_count; n++) {
+		switch (family) {
+		case AF_INET :
+			inet_ntop (family, ir->relay_ip4[n], ab, sizeof (ab));
+			break;
+		case AF_INET6 :
+			inet_ntop (family, ir->relay_ip6[n], ab, sizeof (ab));
+			break;
+		default :
+			fprintf (stderr, "%s: invalid relay family\n",
+				 __func__);
+			return;
+		}
+
+		fprintf (stdout, "%s ", ab);
+	}
+
+	return;
+}
+
 static int
 prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 {
-	int len, ai_family = 0, prefix_family = 0, relay_family = 0;
+	int len, ai_family = 0, prefix_family = 0;
 	__u8 weight, length, encap_type = 0, index;
-	char addr[16], addrbuf1[64], addrbuf2[64];
+	char addr[16], addrbuf[64];
 	struct genlmsghdr * ghdr;
 	struct rtattr * attrs[IPLB_ATTR_MAX + 1];
 	struct iplb_stats stats;
+	struct iplb_relay ir;
 
 	char * encap_type_name[] = {
 		"gre", "ipip", "lsrr"
 	};
 
 	memset (addr, 0, sizeof (addr));
-	memset (addrbuf1, 0, sizeof (addrbuf1));
-	memset (addrbuf2, 0, sizeof (addrbuf2));
+	memset (addrbuf, 0, sizeof (addrbuf));
+	memset (&ir, 0, sizeof (struct iplb_relay));
 
 	if (n->nlmsg_type == NLMSG_ERROR) {
 		fprintf (stderr, "%s: nlmsg_error\n", __func__);
@@ -747,28 +819,19 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 	}
 
 	inet_ntop (ai_family, RTA_DATA(attrs[prefix_family]),
-		   addrbuf1, sizeof (addrbuf1));
+		   addrbuf, sizeof (addrbuf));
 	
-
-	if (attrs[IPLB_ATTR_RELAY4]) {
-		ai_family = AF_INET;
-		relay_family = IPLB_ATTR_RELAY4;
-	} else if (attrs[IPLB_ATTR_RELAY6]) {
-		ai_family = AF_INET6;
-		relay_family = IPLB_ATTR_RELAY6;
+	if (attrs[IPLB_ATTR_RELAY]) {
+		memcpy (&ir, RTA_DATA (attrs[IPLB_ATTR_RELAY]),
+			sizeof (struct iplb_relay));
 	}
 
-	if (relay_family) {
-		inet_ntop (ai_family, RTA_DATA (attrs[relay_family]),
-			   addrbuf2, sizeof (addrbuf2));
-
-		if (attrs[IPLB_ATTR_WEIGHT]) {
-			weight = rta_getattr_u8 (attrs[IPLB_ATTR_WEIGHT]);
-		} else {
-			fprintf (stderr, "%s: weight does not exist\n", 
-				 __func__);
-			return -1;
-		}
+	if (attrs[IPLB_ATTR_WEIGHT]) {
+		weight = rta_getattr_u8 (attrs[IPLB_ATTR_WEIGHT]);
+	} else {
+		fprintf (stderr, "%s: weight does not exist\n", 
+			 __func__);
+		return -1;
 	}
 
 
@@ -799,27 +862,16 @@ prefix_nlmsg (const struct sockaddr_nl * who, struct nlmsghdr * n, void * arg)
 		return -1;
 	}
 
-	if (!show_p.detail_flag) {
-		if (relay_family) {
-			fprintf (stdout,
-				 "prefix %s/%d relay %s weight %d type %s "
-				 "index %u\n",
-				 addrbuf1, length, addrbuf2, weight,
-				 encap_type_name[encap_type],
-				 index);
-		} else if (!relay_family){
-			fprintf (stdout, "prefix %s/%d relay none\n",
-				 addrbuf1, length);
-		}
+	fprintf (stdout, "prefix %s/%d relay ", addrbuf, length);
+	print_iplb_relay (ai_family, &ir);
+	fprintf (stdout, "weight %d type %s index %u\n",
+		 weight, encap_type_name[encap_type], index);
+
+	if (show_p.detail_flag) {
+		fprintf (stdout, "\n");
 	} else {
-		if (relay_family) {
-			fprintf (stdout,
-				 "prefix %s/%d relay %s weight %d type %s "
-				 "index %u txpkt %u txbyte %u\n",
-				 addrbuf1, length, addrbuf2, weight,
-				 encap_type_name[encap_type],
-				 index, stats.pkt_count, stats.byte_count);
-		}
+		fprintf (stdout, " txpkt %u txbyte %u\n",
+			 stats.pkt_count, stats.byte_count);
 	}
 
 
