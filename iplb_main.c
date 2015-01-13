@@ -139,6 +139,7 @@ struct relay_addr {
 
 struct relay_tuple {
 	struct list_head	list;		/* private */
+	struct rcu_head		rcu;		/* private */
 
 	patricia_node_t		* patricia;	/* patricia node */
 	prefix_t		* prefix;	/* prefix of route table */
@@ -370,7 +371,7 @@ destroy_relay_tuple (struct relay_tuple * tuple)
 
 	list_del_rcu (&tuple->list);
 
-	kfree (tuple);
+	kfree_rcu (tuple, rcu);
 
 	return;
 }
@@ -500,8 +501,6 @@ is_same_relay_points (struct relay_addr * relay, struct iplb_relay * ir)
 	switch (relay->family) {
 	case AF_INET :
 		for (n = 0; n < ir->relay_count; n++) {
-			printk (KERN_INFO "relay %pI4, ir %pI4\n",
-				relay->relay_ip4[n], ir->relay_ip4[n]);
 			if (*(relay->relay_ip4[n]) != *(ir->relay_ip4[n]))
 				break;
 		}
@@ -941,7 +940,7 @@ ipv4_set_gre_encap (struct sk_buff * skb, struct relay_addr * relay)
 {
 	int n;
 
-	for (n = 0; n < relay->relay_count; n++) {
+	for (n = relay->relay_count - 1; n >= 0; n--) {
 		_ipv4_set_gre_encap (skb, relay->relay_ip4[n]);
 	}
 
@@ -984,8 +983,8 @@ ipv4_set_ipip_encap (struct sk_buff * skb, struct relay_addr * relay)
 {
 	int n;
 
-	for (n = 0; n < relay->relay_count; n++) {
-		_ipv4_set_gre_encap (skb, relay->relay_ip4[n]);
+	for (n = relay->relay_count - 1; n >= 0; n--) {
+		_ipv4_set_ipip_encap (skb, relay->relay_ip4[n]);
 	}
 
 	return;
@@ -2317,9 +2316,9 @@ iplb_nl_cmd_prefix4_flush (struct sk_buff * skb, struct genl_info * info)
 
 	list_for_each_safe (p, tmp, &rtable4.rlist) {
 		tuple = list_entry (p, struct relay_tuple, list);
-		list_del (p);
+		list_del_rcu (p);
 		patricia_remove (rtable4.rtable, tuple->patricia);
-		kfree (tuple);
+		kfree_rcu (tuple, rcu);
 	}
 
 	write_unlock_bh (&rtable4.lock);
@@ -2337,9 +2336,9 @@ iplb_nl_cmd_prefix6_flush (struct sk_buff * skb, struct genl_info * info)
 
 	list_for_each_safe (p, tmp, &rtable6.rlist) {
 		tuple = list_entry (p, struct relay_tuple, list);
-		list_del (p);
+		list_del_rcu (p);
 		patricia_remove (rtable4.rtable, tuple->patricia);
-		kfree (tuple);
+		kfree_rcu (tuple, rcu);
 	}
 
 	write_unlock_bh (&rtable6.lock);
