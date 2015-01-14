@@ -515,7 +515,7 @@ check_same_vertex_on_stacks (struct list * incoming)
 			lp.adv_router = r->lsa->adv_router;
 
 			rn = route_node_get (rt, (struct prefix *) &lp);
-			if (!rn) {
+			if (!rn->info) {
 				/* same vertex found !! */
 				route_table_finish (rt);
 				return 1;
@@ -732,7 +732,7 @@ vertex_to_prefix_relay (struct vertex * v, struct list * prefix_relays)
 
 			n = 0;
 			for (ALL_LIST_ELEMENTS_RO (stack, n2, r)) {
-				pr->relay_point[n] = r->id;
+				pr->relay_point[n++] = r->id;
 			}
 
 			listnode_add (prefix_relays, pr);
@@ -773,7 +773,7 @@ prefix_relays_dump (struct list * prefix_relays)
 	struct listnode * node;
 	struct prefix_relay * pr;
 
-	printf ("\nIPLB RELAY DUMP\n");
+	printf ("\nPREFIX RELAY DUMP\n");
 
 	for (ALL_LIST_ELEMENTS_RO (prefix_relays, node, pr)) {
 		inet_ntop (AF_INET, &pr->network, ab1, sizeof (ab1));
