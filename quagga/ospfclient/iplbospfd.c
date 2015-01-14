@@ -152,12 +152,12 @@ vertex_free (struct vertex * v)
 /*
  * for iplb netlink
  */
-#define IPLB_MAX_RELAYS	16
 
-struct iplb_relay {
+
+struct prefix_relay {
 	struct in_addr network;	/* destination prefix */
 	struct in_addr netmask;
-	struct in_addr relay_point[IPLB_MAX_RELAYS];
+	struct in_addr relay_point[IPLB_MAX_RELAY_POINTS];
 };
 #define IS_EMPTY_ADDR(a) ((a).s_addr == 0)
 
@@ -656,7 +656,7 @@ graph_dump (struct vertex_graph * graph)
 }
 
 static struct vertex_graph
-iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
+prefix_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 {
 	int ret;
 	struct vertex * v, * root;
@@ -702,12 +702,12 @@ iplb_relay_calculate (struct ospf_lsdb * db, struct in_addr adv_router)
 
 
 static void
-vertex_to_iplb_relay (struct vertex * v, struct list * iplb_relays)
+vertex_to_prefix_relay (struct vertex * v, struct list * prefix_relays)
 {
 	int n, len, links;
 	struct router_lsa * rlsa;
 	struct router_lsa_link * llsa;
-	struct iplb_relay * ir;
+	struct prefix_relay * pr;
 	struct vertex * r;
 	struct list * stack;
 	struct listnode * n1, * n2;
@@ -724,18 +724,18 @@ vertex_to_iplb_relay (struct vertex * v, struct list * iplb_relays)
 
 		for (ALL_LIST_ELEMENTS_RO (v->stacks, n1, stack)) {
 
-			ir = (struct iplb_relay *) malloc
-				(sizeof (struct iplb_relay));
-			memset (ir, 0, sizeof (struct iplb_relay));
-			ir->network = llsa->link_id;
-			ir->netmask = llsa->link_data;
+			pr = (struct prefix_relay *) malloc
+				(sizeof (struct prefix_relay));
+			memset (pr, 0, sizeof (struct prefix_relay));
+			pr->network = llsa->link_id;
+			pr->netmask = llsa->link_data;
 
 			n = 0;
 			for (ALL_LIST_ELEMENTS_RO (stack, n2, r)) {
-				ir->relay_point[n] = r->id;
+				pr->relay_point[n] = r->id;
 			}
 
-			listnode_add (iplb_relays, ir);
+			listnode_add (prefix_relays, pr);
 		}
 	next:
 		llsa++;
@@ -745,13 +745,13 @@ vertex_to_iplb_relay (struct vertex * v, struct list * iplb_relays)
 }
 
 static struct list *
-gather_iplb_relays (struct vertex_graph * graph)
+gather_prefix_relays (struct vertex_graph * graph)
 {
 	struct vertex * v;
 	struct route_node * rn;
-	struct list * iplb_relays;
+	struct list * prefix_relays;
 
-	iplb_relays = list_new ();
+	prefix_relays = list_new ();
 
 	for (rn = route_top (graph->rv_table); rn; rn = route_next (rn)) {
 		if (!rn->info)
@@ -759,42 +759,42 @@ gather_iplb_relays (struct vertex_graph * graph)
 
 		v = rn->info;
 
-		vertex_to_iplb_relay (v, iplb_relays);
+		vertex_to_prefix_relay (v, prefix_relays);
 	}
 
-	return iplb_relays;
+	return prefix_relays;
 }
 
 static void
-iplb_relays_dump (struct list * iplb_relays)
+prefix_relays_dump (struct list * prefix_relays)
 {
 	int n;
 	char ab1[16], ab2[16];
 	struct listnode * node;
-	struct iplb_relay * ir;
+	struct prefix_relay * pr;
 
 	printf ("\nIPLB RELAY DUMP\n");
 
-	for (ALL_LIST_ELEMENTS_RO (iplb_relays, node, ir)) {
-		inet_ntop (AF_INET, &ir->network, ab1, sizeof (ab1));
-		inet_ntop (AF_INET, &ir->netmask, ab2, sizeof (ab2));
+	for (ALL_LIST_ELEMENTS_RO (prefix_relays, node, pr)) {
+		inet_ntop (AF_INET, &pr->network, ab1, sizeof (ab1));
+		inet_ntop (AF_INET, &pr->netmask, ab2, sizeof (ab2));
 		printf ("Destination prefix %s, %s\n", ab1, ab2);
 
 		printf ("    [ ");
-		for (n = 0; n < IPLB_MAX_RELAYS; n++) {
-			if (IS_EMPTY_ADDR (ir->relay_point[n]))
+		for (n = 0; n < IPLB_MAX_RELAY_POINTS; n++) {
+			if (IS_EMPTY_ADDR (pr->relay_point[n]))
 				break;
-			printf ("%s ", inet_ntoa (ir->relay_point[n]));
+			printf ("%s ", inet_ntoa (pr->relay_point[n]));
 		}
 		printf ("]\n");
 	}
 }
 
 static void
-iplb_relays_destroy (struct list * iplb_relays)
+prefix_relays_destroy (struct list * prefix_relays)
 {
-	iplb_relays->del = free;
-	list_delete (iplb_relays);
+	prefix_relays->del = free;
+	list_delete (prefix_relays);
 }
 
 /*
@@ -841,33 +841,35 @@ mask2len (struct in_addr netmask)
 }
 
 static int
-iplb_relay_install (struct iplb_relay * ir)
+prefix_relay_install (struct prefix_relay * pr)
 {
-	int prefix_len;
+	int n, prefix_len;
 	char ab1[16], ab2[16];
-
-	prefix_len = mask2len (ir->netmask);
-
-	/* XXX: now, only 1 relay point is allowed.
-	 * should support multiple relay points using multiple encap.
-	 */
-	if (!IS_EMPTY_ADDR (ir->relay_point[1])) {
-		D ("number of relay count must be 1.");
-		return -1;
-	}
+	struct iplb_relay ir;
 
 
-	inet_ntop (AF_INET, &ir->network, ab1, sizeof (ab1));
-	inet_ntop (AF_INET, ir->relay_point, ab2, sizeof (ab2));
+
+	prefix_len = mask2len (pr->netmask);
+
+	inet_ntop (AF_INET, &pr->network, ab1, sizeof (ab1));
+	inet_ntop (AF_INET, pr->relay_point, ab2, sizeof (ab2));
 	D ("install %s/%d -> %s", ab1, prefix_len, ab2);
 
 	GENL_REQUEST (req, NLREQ_SIZE, genl_family, 0, IPLB_GENL_VERSION,
 		      IPLB_CMD_RELAY4_ADD, NLM_F_REQUEST | NLM_F_ACK);
 
 	addattr8 (&req.n, NLREQ_SIZE, IPLB_ATTR_PREFIX_LENGTH, prefix_len);
-	addattr32 (&req.n, NLREQ_SIZE, IPLB_ATTR_PREFIX4, ir->network.s_addr);
-	addattr32 (&req.n, NLREQ_SIZE, IPLB_ATTR_RELAY4,
-		   ir->relay_point[0].s_addr);
+	addattr32 (&req.n, NLREQ_SIZE, IPLB_ATTR_PREFIX4, pr->network.s_addr);
+
+	/* setup iplb_relay */
+	memset (&ir, 0, sizeof (struct iplb_relay));
+	for (n = 0; n < IPLB_MAX_RELAY_POINTS &&
+		     !IS_EMPTY_ADDR (pr->relay_point[n]); n++) {
+		*ir.relay_ip4[n] = pr->relay_point[n].s_addr;
+	}
+	ir.relay_count = n;
+	addattr_l (&req.n, NLREQ_SIZE, IPLB_ATTR_RELAY,
+		   &ir, sizeof (struct iplb_relay));
 
 	if (rtnl_talk (&genl_rth, &req.n, 0, 0, NULL) < 0)
 		return -2;
@@ -876,7 +878,7 @@ iplb_relay_install (struct iplb_relay * ir)
 }
 
 static int
-iplb_relay_flush (void)
+prefix_relay_flush (void)
 {
 	GENL_REQUEST (req, NLREQ_SIZE, genl_family, 0, IPLB_GENL_VERSION,
 		      IPLB_CMD_PREFIX4_FLUSH, NLM_F_REQUEST | NLM_F_ACK);
@@ -939,8 +941,8 @@ iplbospfd_lsa_read (struct thread * thread)
 	int ret;
 	struct vertex_graph graph;
 	struct pollfd x[1];
-	struct list * iplb_relays;
-	struct iplb_relay * ir;
+	struct list * prefix_relays;
+	struct prefix_relay * pr;
 	struct listnode * node;
 
 	oc = THREAD_ARG (thread);
@@ -961,22 +963,22 @@ iplbospfd_lsa_read (struct thread * thread)
 
 		ospf_lsdb_dump (lsdb);
 
-		graph = iplb_relay_calculate (lsdb, adv_router);
+		graph = prefix_relay_calculate (lsdb, adv_router);
 		graph_dump (&graph);
 
-		iplb_relays = gather_iplb_relays (&graph);
-		iplb_relays_dump (iplb_relays);
+		prefix_relays = gather_prefix_relays (&graph);
+		prefix_relays_dump (prefix_relays);
 
 		/* install iplb entires */
 		if (enable_iplb) {
-			iplb_relay_flush ();
-			for (ALL_LIST_ELEMENTS_RO (iplb_relays, node, ir)) {
-				iplb_relay_install (ir);
+			prefix_relay_flush ();
+			for (ALL_LIST_ELEMENTS_RO (prefix_relays, node, pr)) {
+				prefix_relay_install (pr);
 			}
 		}
 
 		vertex_graph_destroy (&graph);
-		iplb_relays_destroy (iplb_relays);
+		prefix_relays_destroy (prefix_relays);
 	}
 
 	thread_add_read (master, iplbospfd_lsa_read, oc, fd);
