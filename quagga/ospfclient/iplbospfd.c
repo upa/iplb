@@ -852,8 +852,6 @@ prefix_relay_install (struct prefix_relay * pr)
 	prefix_len = mask2len (pr->netmask);
 
 	inet_ntop (AF_INET, &pr->network, ab1, sizeof (ab1));
-	inet_ntop (AF_INET, pr->relay_point, ab2, sizeof (ab2));
-	D ("install %s/%d -> %s", ab1, prefix_len, ab2);
 
 	GENL_REQUEST (req, NLREQ_SIZE, genl_family, 0, IPLB_GENL_VERSION,
 		      IPLB_CMD_RELAY4_ADD, NLM_F_REQUEST | NLM_F_ACK);
@@ -862,11 +860,16 @@ prefix_relay_install (struct prefix_relay * pr)
 	addattr32 (&req.n, NLREQ_SIZE, IPLB_ATTR_PREFIX4, pr->network.s_addr);
 
 	/* setup iplb_relay */
+	printf ("prefix relay install %s/%d ->", ab1, prefix_len);
 	memset (&ir, 0, sizeof (struct iplb_relay));
 	for (n = 0; n < IPLB_MAX_RELAY_POINTS &&
 		     !IS_EMPTY_ADDR (pr->relay_point[n]); n++) {
 		*ir.relay_ip4[n] = pr->relay_point[n].s_addr;
+		inet_ntop (AF_INET, ir.relay_ip4[n], ab2, sizeof (ab2));
+		printf (" %s", ab2);
 	}
+	printf ("\n");
+
 	ir.relay_count = n;
 	addattr_l (&req.n, NLREQ_SIZE, IPLB_ATTR_RELAY,
 		   &ir, sizeof (struct iplb_relay));
