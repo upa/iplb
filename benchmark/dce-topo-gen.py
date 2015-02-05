@@ -13,7 +13,11 @@ SPF_STATE_NOVISIT = 0
 SPF_STATE_CANDIDATE = 1
 SPF_STATE_VISITED = 2
 
-#links
+
+square = {
+    1 : [ 2, 3 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3 ]
+    }
+
 fattree = {
     1 : [ 5, 7, 9, 11], 2 : [ 5, 7, 9, 11 ], 
     3 : [ 6, 8, 10, 12 ], 4 : [ 6, 8, 10, 12 ],
@@ -43,16 +47,16 @@ class Link () :
         self.id2_addr = self.id2addr (self.id2, self.linkbase)
         linkbase += 1
 
-        # spf calculation related
-        self.spf_state = SPF_STATE_NOVISITED
-
         return
+
+    def __repr__(self):
+        return "<Link '%2d' : '%2d'>" % (self.id1, self.id2)
 
     def id2addr (self, id, linkbase) :
         # 2.X.X.(1|2)/24
         o2 = linkbase / 256
         o3 = linkbase - (o2) * 256
-        return "2.%d.%d.%d/24" % (o2, o3, id)
+        return "2.%d.%d.%d" % (o2, o3, id)
 
     def address (self, id) :
         if id == self.id1 :
@@ -73,14 +77,18 @@ class Link () :
 class Node () :
     def __init__ (self, id) :
         self.id = id
-        self.loaddr = "%s%d/32" % (loprefix, id)
+        self.loaddr = "%s%d" % (loprefix, id)
         self.links = {} # neighbor_id : Link, neighbor_id : Link,
 
         # SPF calculation related
         self.spf_distance = -1
-        self.spf_state = SPF_STATE_NOVIST
-        self.spf_nexthop = None
+        self.spf_state = SPF_STATE_NOVISIT
+        self.spf_nexthop = set ()
+        self.spf_incoming = set ()
         return
+
+    def __repr__(self):
+        return "<Node : '%2d' >" % self.id
 
     def add_link (self, link) :
         self.links[link.neighbor_id(self.id)] = link
@@ -95,11 +103,25 @@ class Node () :
 
         return li
         
+    def neighbor_link (self, id) : 
+        if not self.links.has_key (id) :
+            print self + " deos not have link to %d" % id
+            return None
+        return self.links[id]
 
 class Topology () :
     def __init__ (self) :
         self.nodes = {} # id: Node()
         self.links = {} # id1: id2: Link()
+        self.ecmp = False
+        return
+
+    def enable_ecmp (self) :
+        self.ecmp = True
+        return
+
+    def disable_ecmp (self) :
+        self.ecmp = False
         return
 
     def add_node (self, node) :
@@ -142,7 +164,7 @@ class Topology () :
     def list_link (self) :
         li = []
         for id1 in self.links.keys () :
-            for id2 in self.links[id].keys () :
+            for id2 in self.links[id1].keys () :
                 li.append (self.links[id1][id2])
 
         return li
@@ -173,52 +195,157 @@ class Topology () :
                     (nei, link.address (node.id), link.address (nei))
             print
 
+        return
+
+    def node_dump (self) :
+        for node in self.list_node () :
+            print "NODE %d loaddr %s/32" % (node.id, node.loaddr)
+        
+        return
+
+    def link_dump (self):
+        for link in self.list_link () :
+            print ("LINK %d %s/24 - %d %s/24" %
+                   (link.id1, link.id1_addr, link.id2, link.id2_addr))
+
+        return
+
     def cleanup_for_spf (self) :
         for node in self.list_node () :
-            node->spf_cost = 1
-            node->spf_state = SPF_STATE_NOVIST
+            node.spf_cost = 1
+            node.spf_state = SPF_STATE_NOVISIT
+            node.spf_incoming.clear ()
+            node.spf_nexthop.clear ()
 
-        for link in self.list_link () :
-            link->spf_state = SPF_STATE_NOVIST
+        return
+
+    def calculate_spf_candidate_add (self, v, candidate) :
+
+        for link in v.list_link () :
+            nei = self.find_node (link.neighbor_id (v.id))
+
+            if nei.spf_state == SPF_STATE_NOVISIT :
+                # 1st visit. add to candidate
+                nei.spf_cost = v.spf_cost + 1
+                nei.spf_state = SPF_STATE_CANDIDATE
+                nei.spf_incoming.add (v)
+                candidate.append (nei)
+
+            elif (nei.spf_state == SPF_STATE_CANDIDATE and 
+                  nei.spf_cost > v.spf_cost + 1) :
+                # new shorter route to candidate vertex is found.
+                # update cost and incoming info.
+                nei.spf_cost = v.spf_cost + 1
+                nei.spf_incoming.clear ()
+                nei.spf_incoming.add (v)
+
+            elif (nei.spf_state == SPF_STATE_CANDIDATE and
+                  not v in nei.spf_incoming and
+                  nei.spf_cost == v.spf_cost + 1) :
+                # new ECMP link is found.
+
+                if self.ecmp :
+                    # add new link
+                    nei.spf_incoming.add (v)
+                else :
+                    # larger link id node alives
+                    alive = v
+                    for incoming in nei.spf_incoming :
+                        if incoming.id > alive.id :
+                            alive = incoming
+
+                    nei.spf_incoming.clear ()
+                    nei.spf_incoming.add (alive)
+
+        return
+
+    def calculate_spf_candidate_decide (self, candidate) :
+        
+        distance = -1
+        next = None
+
+        for v in candidate :
+            if not next or distance < 0 :
+                next = v
+                distance = v.spf_cost
+            elif v.spf_cost < distance :
+                next = v
+                distance = v.spf_cost
+
+        if not next :
+            print "candidate_decide failed"
+            sys.exit (1)
+            return
+
+        return next
+            
 
     def calculate_spf (self, root) :
 
+        self.cleanup_for_spf ()
+
         candidate = []
-        candidate_append (root)
+        candidate.append (root)
 
         while len (candidate) > 0 :
 
-            # select a vertex to be decided
-            next = None
-            distance = -1
-            for v in candidate :
-                if not next or distance < 0 :
-                    next = v
-                    distance = root->spf_cost
-                else if next->spf_cost < distance :
-                    next = v
-
-            if not next :
-                print "calculate_spf failed: no next vertex on candidates"
-                sys.exit (1)
-                return
+            # select shortest next vertex
+            next = self.calculate_spf_candidate_decide (candidate)
 
             # process decided next vertex
-            next->spf_state = SPF_STATE_VISITED
+            next.spf_state = SPF_STATE_VISITED
             candidate.remove (next)
-
+            
+            for v in next.spf_incoming :
+                if v == root :
+                    next.spf_nexthop.add (next)
+                else :
+                    next.spf_nexthop |= v.spf_nexthop
 
             # add new candidates
+            self.calculate_spf_candidate_add (next, candidate)
+
+
+    def spf_dump (self, root) :
+
+        for node in self.list_node () :
+            if len (node.spf_nexthop) == 0 :
+                continue
+
+            nexthops = []
+            for nexthop in node.spf_nexthop :
+                link = self.find_link (root.id, nexthop.id)
+                nexthops.append (link.address (nexthop.id))
+
+            print ("ROUTE %d to %s/32 nexthop %s" % 
+                   (root.id, node.loaddr, ' '.join (nexthops)))
+
+        return
             
-
-
 
 def main () :
 
     topo = Topology ()
+    #topo.read_links (square)
     topo.read_links (fattree)
+    
+    topo.enable_ecmp ()
 
-    topo.dump ()
+    topo.node_dump ()
+    topo.link_dump ()
+
+    for root in topo.list_node () :
+
+        if len (root.links.keys ()) == 1 :
+            id = root.links.keys()[0]
+            link = root.links[id]
+            gateway = link.address (id)
+            print "ROUTE %d to default nexthop %s" % (root.id, gateway)
+            continue
+
+        topo.calculate_spf (root)
+        topo.spf_dump (root)
+
 
     return
 
