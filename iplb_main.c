@@ -14,7 +14,7 @@
 #endif
 
 #define FIRST_FLOW4_HASHBASE	/* When an incoming packet is init of new flow,
-				 * relay addr is decied by 5 tuple */
+				 * relay addr is decied by hash of 5 tuple */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -137,6 +137,15 @@ struct relay_addr {
 #define RELAY_TABLE_MAX		63	/* idx 0 means Native Forwaridng */
 
 
+/* tuple classifier is used by flow assignment algorithm */
+struct tuple_classifier {
+	__u32 d;	/* Rmax - Rmin */
+	__u32 bps;	/* bps of largest flow */
+	struct relay_addr * rmax, * rmin;
+	struct iplb_flow4 * flow4;	/* the flow will be reasigned */
+};
+
+/* a prefix, and relay points for the prefix */
 struct relay_tuple {
 	struct list_head	list;		/* private */
 	struct rcu_head		rcu;		/* private */
@@ -151,7 +160,7 @@ struct relay_tuple {
 	struct list_head	relay_list;	/* list of relay_addr */
 
 	/* used by flow_classifier only. Do not touch !! */
-	void * tuple_class;
+	struct tuple_classifier tc;
 };
 
 
@@ -701,21 +710,11 @@ _iplb_flow_classifier (unsigned long arg)
 
 	int n = 0, i;
 	__u32  max, min;
+	struct tuple_classifier	* tc;
 	struct relay_addr	* relay;
 	struct relay_tuple	* tuple;
 	struct iplb_flow4	* flow4;
 	struct iplb_rtable	* rtable = &rtable4;
-
-
-	/* XXX: Max number of tuples is 16 !! Terrible !! FIXME !!!!! */
-	struct tuple_classifier {
-		__u32 d;	/* Rmax - Rmin */
-		__u32 bps;	/* bps of largest flow */
-		struct relay_tuple * tuple;
-		struct relay_addr * rmax, * rmin;
-		struct iplb_flow4 * flow4;
-	} tuple_class[16] = { [0 ... 15 ] = { 0, 0, NULL, NULL, NULL, NULL, }};
-	struct tuple_classifier * tc;
 
 	/*
 	 * At first,
@@ -725,51 +724,47 @@ _iplb_flow_classifier (unsigned long arg)
 	list_for_each_entry_rcu (tuple, &rtable->rlist, list) {
 		max = 0;
 		min = 0xFFFFFFFF;
-		tuple_class[n].tuple = tuple;
+
+		/* cleanup tuple->tc */
+		tc = &tuple->tc;
+		tc->d = 0;
+		tc->bps = 0;
+		tc->rmax = NULL;
+		tc->rmin = NULL;
+		tc->flow4 = NULL;
+
 		list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
 			if (IPLB_STATS_BPS (relay->stats) >= max) {
 				max = IPLB_STATS_BPS (relay->stats);
-				tuple_class[n].rmax = relay;
+				tc->rmax = relay;
 			}
 			if (IPLB_STATS_BPS (relay->stats) <= min) {
 				min = IPLB_STATS_BPS (relay->stats);
-				tuple_class[n].rmin = relay;
+				tc->rmin = relay;
 			}
 		}
 		if (unlikely (min > max)) {
 			pr_debug (IPLB_NAME ":%s: min max failed\n", __func__);
-			goto tuple_next;
+			continue;
 		}
-		tuple_class[n].d = max - min;
-		tuple->tuple_class = &tuple_class[n];
-
-	tuple_next:
-		n++;
-		if (n == 16) {
-			pr_debug (IPLB_NAME ":%s: sorry, max num of "
-				"tuple is 16...", __func__);
-			return;
-		}
+		tc->d = max - min;
 	}
 
 	/*
 	 * Finding the largest flow assigned to Rmax and smaller than D.
-	 * This flow is stored to tuple_class[n].flow4.
+	 * This flow is stored to tuple->tc.flow4.
 	 */
 	for (i = 0; i < 1; i++) {
 		hash_for_each_rcu (flow4_table, n, flow4, hash) {
 
 			tuple = find_relay_tuple (rtable, AF_INET,
 						  &flow4->daddr, 32);
-			if (!tuple || tuple->tuple_class == NULL) {
-				pr_debug (IPLB_NAME ":%s: find relay tuple for"
-					  "flow failed !!\n", __func__);
+
+			tc = &tuple->tc;
+
+			if (tc->rmax->index != flow4->relay_index) {
 				continue;
 			}
-			tc = (struct tuple_classifier *) tuple->tuple_class;
-
-			if (tc->rmax->index != flow4->relay_index)
-				continue;
 
 			if (tc->flow4 == NULL &&
 			    IPLB_STATS_BPS (flow4->stats) < tc->d) {
@@ -788,22 +783,23 @@ _iplb_flow_classifier (unsigned long arg)
 		}
 
 		/*
-		 * Reassign tuple_class[n].flow4 to Rmin.
+		 * Reassign tuple->tc.flow4 to Rmin.
 		 */
-		for (n = 0; n < 64 && tuple_class[n].tuple != NULL; n++) {
-			if (tuple_class[n].flow4 == NULL) {
+		list_for_each_entry_rcu (tuple, &rtable->rlist, list) {
+
+			tc = &tuple->tc;
+
+			if (tc->flow4 == NULL)
 				continue;
-			}
-			if (tuple_class[n].rmin == NULL) {
+
+			if (tc->rmin == NULL) {
 				pr_debug (IPLB_NAME ":%s: rmin is null!!\n",
 					  __func__);
 				continue;
 			}
-			tuple_class[n].flow4->relay_index =
-				tuple_class[n].rmin->index;
-			tuple_class[n].d -=
-				IPLB_STATS_BPS (tuple_class[n].flow4->stats);
-			tuple_class[n].flow4 = NULL;
+			tc->flow4->relay_index = tc->rmin->index;
+			tc->d -= IPLB_STATS_BPS (tc->flow4->stats);
+			tc->flow4 = NULL;
 		}
 	}
 
