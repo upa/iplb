@@ -267,7 +267,7 @@ dst2prefix (u8 af, void * addr, u16 len, prefix_t * prefix)
 	prefix->ref_count = 1;
 
 	switch (af) {
-	case (AF_INET) : 
+	case (AF_INET) :
 		ADDR4COPY (addr, &prefix->add);
 		break;
 	case (AF_INET6) :
@@ -880,7 +880,7 @@ _ipv4_set_gre_encap (struct sk_buff * skb, __be32 * addr)
 		return;
 	}
 
-	ipiph = (struct iphdr *) __skb_push (skb, sizeof (struct iphdr) + 
+	ipiph = (struct iphdr *) __skb_push (skb, sizeof (struct iphdr) +
 					     sizeof (struct grehdr));
 	skb_reset_network_header (skb);
 
@@ -1713,7 +1713,7 @@ iplb_nl_cmd_relay6_delete (struct sk_buff * skb, struct genl_info * info)
 
 static int
 iplb_nl_prefix_send (struct sk_buff * skb, u32 pid, u32 seq, int flags,
-		     int cmd, struct relay_tuple * tuple) 
+		     int cmd, struct relay_tuple * tuple)
 {
 	void * hdr;
 	int prefix_attr, addrlen;
@@ -1832,7 +1832,7 @@ iplb_nl_tuple_send (struct sk_buff * skb, struct netlink_callback * cb,
 	} else {
 		list_for_each_entry_rcu (relay, &tuple->relay_list, list) {
 			iplb_nl_relay_send (skb, NETLINK_CB (cb->skb).portid,
-					    cb->nlh->nlmsg_seq, NLM_F_MULTI, 
+					    cb->nlh->nlmsg_seq, NLM_F_MULTI,
 					    cmd, relay);
 		}
 	}
@@ -1995,7 +1995,7 @@ iplb_nl_cmd_weight_set (struct sk_buff * skb, struct genl_info * info)
 		prefix_family = AF_INET;
 	}
 	if (info->attrs[IPLB_ATTR_PREFIX6]) {
-		nla_memcpy (prefix, info->attrs[IPLB_ATTR_PREFIX6], 
+		nla_memcpy (prefix, info->attrs[IPLB_ATTR_PREFIX6],
 			    sizeof (prefix));
 		prefix_family = AF_INET6;
 	}
@@ -2452,7 +2452,7 @@ static struct genl_ops iplb_nl_ops[] = {
 
 
 /********************************
- ****   init/exit module 
+ ****   init/exit module
  ********************************/
 
 static int
@@ -2512,7 +2512,7 @@ __exit iplb_exit_module (void)
 	DESTROY_IPLB_RTABLE (&rtable6);
 	destroy_flow4 ();
 
-	printk (KERN_INFO "iplb (%s) is unloaded\n", 
+	printk (KERN_INFO "iplb (%s) is unloaded\n",
 		IPLB_VERSION);
 
 	return;
