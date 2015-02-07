@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import sys
+import copy
 import operator
 from optparse import OptionParser
 from argparse import ArgumentParser
@@ -20,6 +21,15 @@ SPF_STATE_VISITED = 2
 square = {
     1 : [ 2, 3 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3 ]
     }
+square_client = range (1, 4 + 1)
+
+
+squaretwo = {
+    1 : [ 2, 3 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3, 5, 6 ],
+    5 : [ 4, 7 ], 6 : [ 4, 7 ], 7 : [ 5, 6 ]
+    }
+squaretwo_client = range (1, 7 + 1)
+
 
 # 3-level 4-ary fat-tree topo
 fattree = {
@@ -38,6 +48,7 @@ fattree = {
     29 : [ 17 ], 30 : [ 17 ], 31 : [ 18 ], 32 : [ 18 ],
     33 : [ 19 ], 34 : [ 19 ], 35 : [ 20 ], 36 : [ 20 ],
     }
+fattree_client = range (21, 36 + 1)
 
 
 # n = 4, k = 1 BCube
@@ -51,6 +62,7 @@ bcube = {
     17 : [  1, 7, ], 18 : [  2, 7, ], 19 : [  3, 7, ], 20 : [  4, 7, ],
     21 : [  1, 8, ], 22 : [  2, 8, ], 23 : [  3, 8, ], 24 : [  4, 8, ],
     }
+bcube_client = range (9, 24 + 1)
 
 
 class Link () :
@@ -66,13 +78,13 @@ class Link () :
         return
 
     def __repr__(self):
-        return "<Link '%2d' : '%2d'>" % (self.id1, self.id2)
+        return "<Link '%d' : '%d'>" % (self.id1, self.id2)
 
     def id2addr (self, id, linkbase) :
-        # 2.X.X.(1|2)/24
+        # 10.X.X.(1|2)/24
         o2 = linkbase / 256
         o3 = linkbase - (o2) * 256
-        return "2.%d.%d.%d" % (o2, o3, id)
+        return "10.%d.%d.%d" % (o2, o3, id)
 
     def address (self, id) :
         if id == self.id1 :
@@ -101,10 +113,11 @@ class Node () :
         self.spf_state = SPF_STATE_NOVISIT
         self.spf_nexthop = set ()
         self.spf_incoming = set ()
+        self.spf_stacks = []
         return
 
     def __repr__(self):
-        return "<Node : '%2d' >" % self.id
+        return "<Node : '%d' >" % self.id
 
     def add_link (self, link) :
         self.links[link.neighbor_id(self.id)] = link
@@ -232,7 +245,10 @@ class Topology () :
             node.spf_state = SPF_STATE_NOVISIT
             node.spf_incoming.clear ()
             node.spf_nexthop.clear ()
-
+            while node.spf_stacks :
+                l = node.spf_stacks.pop ()
+                del (l)
+                
         return
 
     def calculate_spf_candidate_add (self, v, candidate) :
@@ -275,6 +291,17 @@ class Topology () :
 
         return
 
+    def check_same_vertex_on_top_of_stacks (self, incoming) :
+
+        hash = {}
+        for v in incoming :
+            for stack in v.spf_stacks :
+                if hash.has_key (stack[len (stack) - 1].id) :
+                    return True
+                hash[stack[len (stack) - 1].id] = True
+            
+        return False
+
     def calculate_spf_candidate_decide (self, candidate) :
         
         distance = -1
@@ -292,6 +319,40 @@ class Topology () :
             print "candidate_decide failed"
             sys.exit (1)
             return
+
+        """
+        iplb relay point search.
+        /* copy relay point stacks. */
+        /* if incoming multiple incoming links exist, ECMPed vertex.
+         * 1. if there is same vertex in top of multiple stacks,
+              push incoming vertexes to each stacks.
+         * 2. if stack of incoming vertex is null, push the incoming vertex.
+         */
+        """
+
+        ecmped = False
+        duplicated = False
+
+        if len (next.spf_incoming) > 1 :
+            ecmped = True
+        if self.check_same_vertex_on_top_of_stacks (next.spf_incoming) :
+            duplicated = True
+
+        for v in next.spf_incoming :
+            # copy stacks
+            for stack in v.spf_stacks :
+                copystack = copy.deepcopy (stack)
+
+                if ecmped and duplicated :
+                    # Term 1 is fulfilled. push the v to stack
+                    copystack.append (v)
+                    
+                next.spf_stacks.append (copystack)
+
+            if ecmped and not v.spf_stacks :
+                # Term 2 is fullfilled. push the v to stacks as new stack
+                next.spf_stacks.append ([v])
+                
 
         return next
             
@@ -339,7 +400,19 @@ class Topology () :
         return
             
 
-def main (links, ecmped) :
+    def iplb_dump (self, root) :
+
+        for node in self.list_node () :
+            if not node.spf_stacks :
+                continue
+
+            for stack in node.spf_stacks :
+                relays = ' '.join (map (lambda x: x.loaddr, stack))
+                print ("IPLB %d to %s/32 relays %s" %
+                       (root.id, node.loaddr, relays))
+
+
+def main (links, client, ecmped) :
 
     topo = Topology ()
     topo.read_links (links)
@@ -352,16 +425,19 @@ def main (links, ecmped) :
 
     for root in topo.list_node () :
 
+        topo.calculate_spf (root)
+
+
         if len (root.links.keys ()) == 1 :
             id = root.links.keys()[0]
             link = root.links[id]
             gateway = link.address (id)
             print "ROUTE %d to default nexthop %s" % (root.id, gateway)
-            continue
+        else :
+            topo.spf_dump (root)
 
-        topo.calculate_spf (root)
-        topo.spf_dump (root)
-
+        if root.id in client :
+            topo.iplb_dump (root)
 
     return
 
@@ -372,8 +448,7 @@ if __name__ == '__main__' :
     parser = OptionParser (desc)
 
     parser.add_option (
-        '-t', '--topology', type = "choice",
-        choices = [ 'fattree', 'bcube', 'square' ],
+        '-t', '--topology', type = "string",
         default = 'fattree',
         dest = 'topology',
         )
@@ -388,11 +463,17 @@ if __name__ == '__main__' :
 
     if options.topology == 'fattree' :
         links = fattree
+        client = fattree_client
     elif options.topology == 'bcube' :
         links = bcube
+        client = bcube_client
     elif options.topology == 'square' :
         links = square
+        client = square_client
+    elif options.topology == 'squaretwo' :
+        links = squaretwo
+        client = squaretwo_client
     else :
         print "invalid topology type"
 
-    main (links  , options.ecmped)
+    main (links, client, options.ecmped)
