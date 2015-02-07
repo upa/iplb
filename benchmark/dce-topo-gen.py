@@ -20,16 +20,18 @@ SPF_STATE_VISITED = 2
 
 
 square = {
-    1 : [ 2, 3 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3 ]
+    1 : [ 2, 3, 5 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3, 6 ],
+    5 : [ 1 ], 6 : [ 4 ],
     }
-square_client = range (1, 4 + 1)
+square_client = [ 5, 6 ]
 
 
 squaretwo = {
-    1 : [ 2, 3 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3, 5, 6 ],
-    5 : [ 4, 7 ], 6 : [ 4, 7 ], 7 : [ 5, 6 ]
+    1 : [ 2, 3, 8 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3, 5, 6 ],
+    5 : [ 4, 7 ], 6 : [ 4, 7 ], 7 : [ 5, 6, 9 ],
+    8 : [ 1 ], 9 : [ 7 ],
     }
-squaretwo_client = range (1, 7 + 1)
+squaretwo_client = [ 8, 9 ]
 
 
 # 3-level 4-ary fat-tree topo
@@ -58,12 +60,18 @@ bcube = {
     3  : [ 11, 15, 19, 23 ], 4  : [ 12, 16, 20, 24 ],
     5  : [  9, 10, 11, 12 ], 6  : [ 13, 14, 15, 16 ],
     7  : [ 17, 18, 19, 20 ], 8  : [ 21, 22, 23, 24 ],
-    9  : [  1, 5, ], 10 : [  2, 5, ], 11 : [  3, 5, ], 12 : [  4, 5, ],
-    13 : [  1, 6, ], 14 : [  2, 6, ], 15 : [  3, 6, ], 16 : [  4, 6, ],
-    17 : [  1, 7, ], 18 : [  2, 7, ], 19 : [  3, 7, ], 20 : [  4, 7, ],
-    21 : [  1, 8, ], 22 : [  2, 8, ], 23 : [  3, 8, ], 24 : [  4, 8, ],
+    9  : [  1, 5, 25 ], 10 : [  2, 5, 26 ], 11 : [  3, 5, 27 ],
+    12 : [  4, 5, 28 ], 13 : [  1, 6, 29 ], 14 : [  2, 6, 30 ],
+    15 : [  3, 6, 31 ], 16 : [  4, 6, 32 ], 17 : [  1, 7, 33 ],
+    18 : [  2, 7, 34 ], 19 : [  3, 7, 35 ], 20 : [  4, 7, 36 ],
+    21 : [  1, 8, 37 ], 22 : [  2, 8, 38 ], 23 : [  3, 8, 39 ],
+    24 : [  4, 8, 49],
+    25 : [  9 ], 26 : [ 10 ], 27 : [ 11 ], 28 : [ 12 ],
+    29 : [ 13 ], 30 : [ 14 ], 31 : [ 15 ], 32 : [ 16 ],
+    33 : [ 17 ], 34 : [ 18 ], 35 : [ 19 ], 36 : [ 20 ],
+    37 : [ 21 ], 38 : [ 22 ], 39 : [ 23 ], 40 : [ 24 ],
     }
-bcube_client = range (9, 24 + 1)
+bcube_client = range (25, 40 + 1)
 
 
 class Link () :
@@ -82,10 +90,10 @@ class Link () :
         return "<Link '%d' : '%d'>" % (self.id1, self.id2)
 
     def id2addr (self, id, linkbase) :
-        # 10.X.X.(1|2)/24
+        # 100.X.X.(1|2)/24
         o2 = linkbase / 256
         o3 = linkbase - (o2) * 256
-        return "10.%d.%d.%d" % (o2, o3, id)
+        return "100.%d.%d.%d" % (o2, o3, id)
 
     def address (self, id) :
         if id == self.id1 :
@@ -229,10 +237,11 @@ class Topology () :
         return
 
     def info_dump (self, client) :
-        clientmin = client[0]
-        clientmax = client[len (client) - 1]
-        print "INFO nodenum %d linknum %d client %d %d" \
-            % (len (self.list_node()), linkbase, clientmin, clientmax)
+        print "INFO nodenum %d linknum %d clientnum %d" \
+            % (len (self.list_node()), linkbase, len (client))
+
+        for c in client :
+            print "CLIENT %d" % c
 
     def node_dump (self) :
         for node in self.list_node () :

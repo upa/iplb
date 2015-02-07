@@ -15,6 +15,9 @@
 using namespace ns3;
 NS_LOG_COMPONENT_DEFINE ("DceQuaggaFattree");
 
+bool pcap_enable = false;
+
+
 static void
 RunIp (Ptr<Node> node, Time at, std::string str)
 {
@@ -63,16 +66,25 @@ float ntime[MAXNODE]; /* ntime[Nodeid] = Seconds */
 
 
 /* client min/max */
-int clientmin = 0;
-int clientmax = 0;
+int clientnum = 0;
+int clients[MAXNODE];
 
+bool
+is_client (int id)
+{
+	for (int n = 0; n < clientnum; n++)
+		if (clients[n] == id)
+			return true;
+	return false;
+}
 
 /* FLowGen related parameters */
 #define LINKSPEED	"8Mbps"	/* 1000000 Byte per sec */
 #define LINKBYTESPEED	1000000	/* byte per sec */
 #define FLOWNUM		20
-#define FLOWLEN		1000
-#define FLOWPPS		(LINKBYTESPEED / FLOWLEN)
+#define FLOWENCAPLEN	1000
+#define FLOWLEN		(FLOWENCAPLEN - 24)	/* - (ip + gre) */
+#define FLOWPPS		(LINKBYTESPEED / FLOWENCAPLEN)
 #define FLOWDURATION	30              	/* sec  */
 #define FLOWINTERVAL	(1 * 1000000 / FLOWPPS)	/* usec */
 #define FLOWCOUNT	(FLOWPPS * FLOWDURATION)
@@ -101,7 +113,7 @@ RunFlowgen(Ptr<Node> node, Time at, const char * dist,
 	    << " -c " << FLOWCOUNT << " -i " << FLOWINTERVAL
 	    << " -m " << time (NULL) + node->GetId() << "";
 
-	printf ("flowgen %s\n", oss.str().c_str());
+	printf ("Flow %s\n", oss.str().c_str());
 
 	process.SetBinary("flowgen");
 	process.SetStackSize(1 << 20);
@@ -142,8 +154,6 @@ topology_info (char ** args, int argc)
 
 	nodenum = atoi (args[2]);
 	linknum = atoi (args[4]);
-	clientmin = atoi (args[6]);
-	clientmax = atoi (args[7]);
 
 	for (int n = 1; n <= nodenum; n++) {
 		ntime[n] = 0.01;
@@ -163,7 +173,16 @@ topology_info (char ** args, int argc)
 	return;
 }
 
+void
+topology_client (char ** args, int argc)
+{
+	int id;
 
+	id = atoi (args[1]);
+	clients[clientnum++] = id;
+
+	return;
+}
 
 void
 topology_node (char ** args, int argc)
@@ -228,14 +247,17 @@ topology_link (char ** args, int argc)
 	PointToPointHelper p2p;
 	
 	p2p.SetDeviceAttribute ("DataRate", StringValue (LINKSPEED));
-	p2p.SetChannelAttribute ("Delay", StringValue ("0.1ms"));
+	p2p.SetChannelAttribute ("Delay", StringValue ("0ms"));
 	NC = NodeContainer (nodes.Get (id1), nodes.Get (id2));
 	NDC = p2p.Install (NC);
 
-#define PCAP_ENABLE
-#ifdef PCAP_ENABLE
-	p2p.EnablePcapAll ("iplb");
-#endif	
+	if (pcap_enable) {
+		if (is_client (id1) || is_client (id2)) {
+			p2p.EnablePcap ("iplb", NDC);
+			printf ("enable pcap for link between %d and %d\n",
+				id1, id2);
+		}
+	}
 
 	/* set up ip addresses */
 	id1a << "-f inet addr add " << ip1
@@ -350,6 +372,9 @@ read_topology (void)
 		else if (strncmp (args[0], "NODE", 4) == 0)
 			topology_node (args, argc);
 
+		else if (strncmp (args[0], "CLIENT", 6) == 0)
+			topology_client (args, argc);
+
 		else if (strncmp (args[0], "LINK", 4) == 0)
 			topology_link (args, argc);
 
@@ -449,8 +474,13 @@ trace_macrx (std::string path, Ptr<const Packet> packet)
 int
 main (int argc, char ** argv)
 {
-	unsigned int start, end;
+
+	CommandLine cmd;
 	float maxnodetime = 0;
+	unsigned int start, end;
+
+	cmd.AddValue ("pcap", "Enable pcap for client nodes", pcap_enable);
+	cmd.Parse (argc, argv);
 
 	start = time (NULL);
 
@@ -461,7 +491,7 @@ main (int argc, char ** argv)
 			maxnodetime : NODETIME (n);
 	}
 	printf ("latest command time is %.2f second\n", maxnodetime);
-	printf ("client id min=%d, max=%d\n", clientmin, clientmax);
+	printf ("client num %d\n", clientnum);
 	
 	for (int n = 1; n < nodes.GetN (); n++) {
 		std::ostringstream rs, as, ls, lb, fs;
@@ -480,18 +510,19 @@ main (int argc, char ** argv)
 		INCREMENT_NODETIME (n);
 
 		fs << "lb flow show detail";
-		RunIp (nodes.Get (n), Seconds (FLOWTIME + FLOWDURATION - 1),
-		       fs.str ());
+		RunIp (nodes.Get (n), Seconds (FLOWCOUNTSTART), fs.str ());
 	}
 
 
 	/* set trace packet counters */
-        for (int n = clientmin; n <= clientmax; n++) {
+	for (int n = 0; n < clientnum; n++) {
 
-#define TRACE(s, p) s << "/NodeList/" << nodes.Get(n)->GetId()		\
-                      << "/DeviceList/"                                 \
-                      << nodes.Get(n)->GetDevice(0)->GetIfIndex()       \
-                      << "/$ns3::PointToPointNetDevice/" << p
+		int id = clients[n];
+
+#define TRACE(s, p) s << "/NodeList/" << nodes.Get(id)->GetId()		\
+		      << "/DeviceList/"					\
+		      << nodes.Get(id)->GetDevice(0)->GetIfIndex()	\
+		      << "/$ns3::PointToPointNetDevice/" << p
 
 #ifdef TRACEALL
 		std::ostringstream mactx, phytx, macrx, phyrx;
