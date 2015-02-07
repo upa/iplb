@@ -200,6 +200,7 @@ topology_link (char ** args, int argc)
 void
 topology_route (char ** args, int argc)
 {
+	/* set up a route entry */
 	int id;
 	char * prefix;
 	std::ostringstream rt;
@@ -220,7 +221,22 @@ topology_route (char ** args, int argc)
 void
 topology_iplb (char ** args, int argc)
 {
-	
+	/* set up a relay entry */
+	int id;
+	char * prefix;
+	std::ostringstream rl;
+
+	id = atoi (args[1]);
+	prefix = args[3];
+
+	rl << "lb add prefix " << prefix << " relay " << args[5];
+	for (int n = 6; n < argc; n++)
+		rl << "," << args[n];
+
+	RunIp (nodes.Get (id), Seconds (NODETIME (id)), rl.str());
+	INCREMENT_NODETIME (id);
+
+	return;
 }
 
 void
@@ -285,15 +301,18 @@ main (int argc, char ** argv)
 	printf ("latest command time is %.2f second\n", maxnodetime);
 	
 	for (int n = 1; n < nodes.GetN (); n++) {
-		std::ostringstream rs, as, ls;
+		std::ostringstream rs, as, ls, lb;
 		rs << "route show";
 		as << "addr show";
 		ls << "link show";
+		lb << "lb show";
 		RunIp (nodes.Get (n), Seconds (NODETIME(n)), rs.str ());
 		INCREMENT_NODETIME (n);
 		RunIp (nodes.Get (n), Seconds (NODETIME(n)), as.str ());
 		INCREMENT_NODETIME (n);
 		RunIp (nodes.Get (n), Seconds (NODETIME(n)), ls.str ());
+		INCREMENT_NODETIME (n);
+		RunIp (nodes.Get (n), Seconds (NODETIME(n)), lb.str ());
 		INCREMENT_NODETIME (n);
 	}
 
