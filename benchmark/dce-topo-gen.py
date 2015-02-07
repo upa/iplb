@@ -33,7 +33,7 @@ squaretwo_client = range (1, 7 + 1)
 
 # 3-level 4-ary fat-tree topo
 fattree = {
-    1 : [ 5, 7, 9, 11], 2 : [ 5, 7, 9, 11 ], 
+    1 : [ 5, 7, 9, 11], 2 : [ 5, 7, 9, 11 ],
     3 : [ 6, 8, 10, 12 ], 4 : [ 6, 8, 10, 12 ],
     5 : [ 1, 2, 13, 14 ], 6 : [ 3, 4, 13, 14 ],
     7 : [ 1, 2, 15, 16 ], 8 : [ 3, 4, 15, 16],
@@ -131,8 +131,8 @@ class Node () :
             li.append (self.links[nei])
 
         return li
-        
-    def neighbor_link (self, id) : 
+
+    def neighbor_link (self, id) :
         if not self.links.has_key (id) :
             print self + " deos not have link to %d" % id
             return None
@@ -177,7 +177,7 @@ class Topology () :
         if self.links.has_key (id1) :
             if self.links[id1].has_key (id2) :
                 return self.links[id1][id2]
-            
+
         if self.links.has_key (id2) :
             if self.links[id2].has_key (id1) :
                 return self.links[id2][id1]
@@ -229,7 +229,7 @@ class Topology () :
     def node_dump (self) :
         for node in self.list_node () :
             print "NODE %d loaddr %s/32" % (node.id, node.loaddr)
-        
+
         return
 
     def link_dump (self):
@@ -248,7 +248,7 @@ class Topology () :
             while node.spf_stacks :
                 l = node.spf_stacks.pop ()
                 del (l)
-                
+
         return
 
     def calculate_spf_candidate_add (self, v, candidate) :
@@ -263,7 +263,7 @@ class Topology () :
                 nei.spf_incoming.add (v)
                 candidate.append (nei)
 
-            elif (nei.spf_state == SPF_STATE_CANDIDATE and 
+            elif (nei.spf_state == SPF_STATE_CANDIDATE and
                   nei.spf_cost > v.spf_cost + 1) :
                 # new shorter route to candidate vertex is found.
                 # update cost and incoming info.
@@ -299,11 +299,11 @@ class Topology () :
                 if hash.has_key (stack[len (stack) - 1].id) :
                     return True
                 hash[stack[len (stack) - 1].id] = True
-            
+
         return False
 
     def calculate_spf_candidate_decide (self, candidate) :
-        
+
         distance = -1
         next = None
 
@@ -346,16 +346,16 @@ class Topology () :
                 if ecmped and duplicated :
                     # Term 1 is fulfilled. push the v to stack
                     copystack.append (v)
-                    
+
                 next.spf_stacks.append (copystack)
 
             if ecmped and not v.spf_stacks :
                 # Term 2 is fullfilled. push the v to stacks as new stack
                 next.spf_stacks.append ([v])
-                
+
 
         return next
-            
+
 
     def calculate_spf (self, root) :
 
@@ -372,7 +372,7 @@ class Topology () :
             # process decided next vertex
             next.spf_state = SPF_STATE_VISITED
             candidate.remove (next)
-            
+
             for v in next.spf_incoming :
                 if v == root :
                     next.spf_nexthop.add (next)
@@ -394,11 +394,11 @@ class Topology () :
                 link = self.find_link (root.id, nexthop.id)
                 nexthops.append (link.address (nexthop.id))
 
-            print ("ROUTE %d to %s/32 nexthop %s" % 
+            print ("ROUTE %d to %s/32 nexthop %s" %
                    (root.id, node.loaddr, ' '.join (nexthops)))
 
         return
-            
+
 
     def iplb_dump (self, root) :
 
@@ -416,7 +416,7 @@ def main (links, client, ecmped) :
 
     topo = Topology ()
     topo.read_links (links)
-    
+
     if ecmped :
         topo.enable_ecmp ()
 
