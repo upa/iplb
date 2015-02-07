@@ -226,6 +226,12 @@ class Topology () :
 
         return
 
+    def info_dump (self, client) :
+        clientmin = client[0]
+        clientmax = client[len (client) - 1]
+        print "INFO nodenum %d linknum %d client %d %d" \
+            % (len (self.list_node()), linkbase, clientmin, clientmax)
+
     def node_dump (self) :
         for node in self.list_node () :
             print "NODE %d loaddr %s/32" % (node.id, node.loaddr)
@@ -420,6 +426,7 @@ def main (links, client, ecmped) :
     if ecmped :
         topo.enable_ecmp ()
 
+    topo.info_dump (client)
     topo.node_dump ()
     topo.link_dump ()
 
