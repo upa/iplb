@@ -2,6 +2,7 @@
 
 import sys
 import copy
+import random
 import operator
 from optparse import OptionParser
 from argparse import ArgumentParser
@@ -143,14 +144,15 @@ class Topology () :
         self.nodes = {} # id: Node()
         self.links = {} # id1: id2: Link()
         self.ecmp = False
+        self.iplb = False
         return
 
     def enable_ecmp (self) :
         self.ecmp = True
         return
 
-    def disable_ecmp (self) :
-        self.ecmp = False
+    def enable_iplb (self) :
+        self.iplb = True
         return
 
     def add_node (self, node) :
@@ -282,19 +284,7 @@ class Topology () :
                   not v in nei.spf_incoming and
                   nei.spf_cost == v.spf_cost + 1) :
                 # new ECMP link is found.
-
-                if self.ecmp :
-                    # add new link
-                    nei.spf_incoming.add (v)
-                else :
-                    # larger link id node alives
-                    alive = v
-                    for incoming in nei.spf_incoming :
-                        if incoming.id > alive.id :
-                            alive = incoming
-
-                    nei.spf_incoming.clear ()
-                    nei.spf_incoming.add (alive)
+                nei.spf_incoming.add (v)
 
         return
 
@@ -380,11 +370,26 @@ class Topology () :
             next.spf_state = SPF_STATE_VISITED
             candidate.remove (next)
 
-            for v in next.spf_incoming :
-                if v == root :
+            if not self.ecmp :
+                # if ecmp disabled, one incoming having smallest id is selected
+                incoming = None
+                for v in next.spf_incoming :
+                    if not incoming :
+                        incoming = v
+                    else :
+                        if incoming.id > v.id :
+                            incoming = v
+                if incoming == root :
                     next.spf_nexthop.add (next)
-                else :
-                    next.spf_nexthop |= v.spf_nexthop
+                elif incoming :
+                    next.spf_nexthop |= incoming.spf_nexthop
+            else :
+                # if ecmp enabled, all nexthops of incomings are added
+                for v in next.spf_incoming :
+                    if v == root :
+                        next.spf_nexthop.add (next)
+                    else :
+                        next.spf_nexthop |= v.spf_nexthop
 
             # add new candidates
             self.calculate_spf_candidate_add (next, candidate)
@@ -407,10 +412,16 @@ class Topology () :
         return
 
 
-    def iplb_dump (self, root) :
+    def iplb_dump (self, root, client) :
+
+        if not self.iplb :
+            return
+
+        if not root.id in client :
+            return
 
         for node in self.list_node () :
-            if not node.spf_stacks :
+            if not node.spf_stacks or not node.id in client :
                 continue
 
             for stack in node.spf_stacks :
@@ -418,14 +429,41 @@ class Topology () :
                 print ("IPLB %d to %s/32 relays %s" %
                        (root.id, node.loaddr, relays))
 
+        return
 
-def main (links, client, ecmped) :
+
+    def bench_random (self, client, flowdist) :
+
+        candidate = copy.deepcopy (client)
+        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+
+        if len (candidate) % 2 == 1 :
+            # odd number
+            rem = random.choice (candidate)
+            candidate.remove (rem)
+
+        while candidate :
+            src = random.choice (candidate)
+            candidate.remove (src)
+            dst = random.choice (candidate)
+            candidate.remove (dst)
+            conbinations.append ([self.find_node (src), self.find_node (dst)])
+
+        for [src, dst] in conbinations :
+            print "FLOWGEN %s %d %s -> %d %s" % (flowdist, src.id, src.loaddr,
+                                                 dst.id, dst.loaddr)
+
+
+def main (links, client, options) :
 
     topo = Topology ()
     topo.read_links (links)
 
-    if ecmped :
+    if options.ecmp :
         topo.enable_ecmp ()
+
+    if options.iplb :
+        topo.enable_iplb ()
 
     topo.info_dump (client)
     topo.node_dump ()
@@ -444,8 +482,9 @@ def main (links, client, ecmped) :
         else :
             topo.spf_dump (root)
 
-        if root.id in client :
-            topo.iplb_dump (root)
+        topo.iplb_dump (root, client)
+
+    topo.bench_random (client, options.flowdist)
 
     return
 
@@ -463,7 +502,17 @@ if __name__ == '__main__' :
 
     parser.add_option (
         '-e', '--ecmp', action = 'store_true', default = False,
-        dest = 'ecmped'
+        dest = 'ecmp'
+        )
+
+    parser.add_option (
+        '-i', '--iplb', action = 'store_true', default = False,
+        dest = 'iplb'
+        )
+
+    parser.add_option (
+        '-f', '--flowdist', type = "string",
+        default = 'same', dest = 'flowdist',
         )
 
     (options, args) = parser.parse_args ()
@@ -484,4 +533,4 @@ if __name__ == '__main__' :
     else :
         print "invalid topology type"
 
-    main (links, client, options.ecmped)
+    main (links, client, options)
