@@ -234,7 +234,8 @@ class Topology () :
 
     def node_dump (self) :
         for node in self.list_node () :
-            print "NODE %d loaddr %s/32" % (node.id, node.loaddr)
+            print "NODE %d loaddr %s/32 greto %s" % (node.id, node.loaddr,
+                                                     node.loaddr)
 
         return
 
