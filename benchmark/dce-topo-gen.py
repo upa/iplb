@@ -2,6 +2,9 @@
 
 import sys
 import operator
+from optparse import OptionParser
+from argparse import ArgumentParser
+
 
 # 1.0.0.NodeID/32
 loprefix = "1.0.0."
@@ -336,14 +339,13 @@ class Topology () :
         return
             
 
-def main () :
+def main (links, ecmped) :
 
     topo = Topology ()
-    #topo.read_links (square)
-    #topo.read_links (fattree)
-    topo.read_links (bcube)
+    topo.read_links (links)
     
-    topo.enable_ecmp ()
+    if ecmped :
+        topo.enable_ecmp ()
 
     topo.node_dump ()
     topo.link_dump ()
@@ -364,5 +366,33 @@ def main () :
     return
 
 
+if __name__ == '__main__' :
 
-main ()
+    desc = "%prog [Args] [Options]\n"
+    parser = OptionParser (desc)
+
+    parser.add_option (
+        '-t', '--topology', type = "choice",
+        choices = [ 'fattree', 'bcube', 'square' ],
+        default = 'fattree',
+        dest = 'topology',
+        )
+
+    parser.add_option (
+        '-e', '--ecmp', action = 'store_true', default = False,
+        dest = 'ecmped'
+        )
+
+    (options, args) = parser.parse_args ()
+
+
+    if options.topology == 'fattree' :
+        links = fattree
+    elif options.topology == 'bcube' :
+        links = bcube
+    elif options.topology == 'square' :
+        links = square
+    else :
+        print "invalid topology type"
+
+    main (links  , options.ecmped)
