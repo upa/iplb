@@ -32,8 +32,10 @@
 #include <uapi/linux/netfilter.h>
 #include <uapi/linux/netfilter_ipv4.h>
 #include <uapi/linux/netfilter_ipv6.h>
+#include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/sock.h>
+#include <net/route.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 #include <net/genetlink.h>
@@ -1208,8 +1210,13 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 	struct iphdr		* ip;
 	struct relay_tuple	* tuple;
 	struct relay_addr	* relay;
+	struct flowi4	fl4;
+	struct rtable	* rt;
+	struct dst_entry * dst;
+	__be32 original_saddr;
 
 	ip = (struct iphdr *) skb->data;
+	original_saddr = ip->saddr;
 
 	tuple = find_relay_tuple (&rtable4, AF_INET, &ip->daddr, 32);
 	if (!tuple)
@@ -1229,6 +1236,27 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 
 	relay->stats[0].pkt_count++;
 	relay->stats[0].byte_count += skb->len;
+
+        /* lookup routing table again for new destination (ourter header) */
+	ip = (struct iphdr *) skb_network_header (skb);
+
+	memset (&fl4, 0, sizeof (fl4));
+	fl4.saddr = original_saddr;
+	fl4.daddr = ip->daddr;
+
+	dst = skb_dst (skb);
+	rt = ip_route_output_key (dev_net (dst->dev), &fl4);
+	if (IS_ERR (rt)) {
+		pr_debug ("no route to %pI4\n", &fl4.daddr);
+		return NF_DROP;
+	}
+
+	memset (&(IPCB (skb)->opt), 0, sizeof (IPCB (skb)->opt));
+	IPCB(skb)->flags &= ~(IPSKB_XFRM_TUNNEL_SIZE | IPSKB_XFRM_TRANSFORMED |
+			      IPSKB_REROUTED);
+
+	skb_dst_drop (skb);
+	skb_dst_set (skb, &rt->dst);
 
 	return NF_ACCEPT;
 }
