@@ -35,6 +35,7 @@ squaretwo_client = [ 8, 9 ]
 
 
 # 3-level 4-ary fat-tree topo
+# 20 switches and 16 servers
 fattree = {
     1 : [ 5, 7, 9, 11], 2 : [ 5, 7, 9, 11 ],
     3 : [ 6, 8, 10, 12 ], 4 : [ 6, 8, 10, 12 ],
@@ -46,6 +47,7 @@ fattree = {
     15 : [ 7, 8, 25, 26 ], 16 : [ 7, 8, 27, 28 ],
     17 : [ 9, 10, 29, 30 ], 18 : [ 9, 10, 31, 32 ],
     19 : [ 11, 12, 33, 34 ], 20 : [ 11, 12, 35, 36 ],
+
     21 : [ 13 ], 22 : [ 13 ], 23 : [ 14 ], 24 : [ 14 ],
     25 : [ 15 ], 26 : [ 15 ], 27 : [ 16 ], 28 : [ 16 ],
     29 : [ 17 ], 30 : [ 17 ], 31 : [ 18 ], 32 : [ 18 ],
@@ -55,23 +57,90 @@ fattree_client = range (21, 36 + 1)
 
 
 # n = 4, k = 1 BCube
+# 8 switches and 16 servers
 bcube = {
     1  : [  9, 13, 17, 21 ], 2  : [ 10, 14, 18, 22 ],
     3  : [ 11, 15, 19, 23 ], 4  : [ 12, 16, 20, 24 ],
     5  : [  9, 10, 11, 12 ], 6  : [ 13, 14, 15, 16 ],
     7  : [ 17, 18, 19, 20 ], 8  : [ 21, 22, 23, 24 ],
+
     9  : [  1, 5, 25 ], 10 : [  2, 5, 26 ], 11 : [  3, 5, 27 ],
     12 : [  4, 5, 28 ], 13 : [  1, 6, 29 ], 14 : [  2, 6, 30 ],
     15 : [  3, 6, 31 ], 16 : [  4, 6, 32 ], 17 : [  1, 7, 33 ],
     18 : [  2, 7, 34 ], 19 : [  3, 7, 35 ], 20 : [  4, 7, 36 ],
     21 : [  1, 8, 37 ], 22 : [  2, 8, 38 ], 23 : [  3, 8, 39 ],
     24 : [  4, 8, 49],
+
     25 : [  9 ], 26 : [ 10 ], 27 : [ 11 ], 28 : [ 12 ],
     29 : [ 13 ], 30 : [ 14 ], 31 : [ 15 ], 32 : [ 16 ],
     33 : [ 17 ], 34 : [ 18 ], 35 : [ 19 ], 36 : [ 20 ],
     37 : [ 21 ], 38 : [ 22 ], 39 : [ 23 ], 40 : [ 24 ],
     }
 bcube_client = range (25, 40 + 1)
+
+
+# 2 dimension, 4 terminal per switch, 4 switch per dimension
+# 8 switches and 32 servers
+hyperx = {
+    1 : [ 2, 3, 4, 5, 9, 10, 11, 12 ], 2 : [ 1, 3, 4, 6, 13, 14, 15, 16 ],
+    3 : [ 1, 2, 4, 7, 17, 18, 19, 20 ], 4 : [ 1, 2, 3, 8, 21, 22, 23, 24 ],
+    5 : [ 6, 7, 8, 1, 25, 26, 27, 28 ], 6 : [ 5, 7, 8, 2, 29, 30, 31, 32 ],
+    7 : [ 5, 6, 8, 3, 33, 34, 35, 36 ], 8 : [ 5, 6, 7, 4, 37, 38, 39, 40 ],
+
+    9 : [1], 10 : [1], 11 : [1], 12 : [1],
+    13 : [2], 14 : [2], 15 : [2], 16 : [2],
+    17 : [3], 18 : [3], 19 : [3], 20 : [3],
+    21 : [4], 22 : [4], 23 : [4], 24 : [4],
+
+    25 : [5], 26 : [5], 27 : [5], 28 : [5],
+    29 : [6], 30 : [6], 31 : [6], 32 : [6],
+    33 : [7], 34 : [7], 35 : [7], 36 : [7],
+    37 : [8], 38 : [8], 39 : [8], 40 : [8],
+    }
+hyperx_client = range (9, 40 + 1)
+
+
+
+def generate_random_graph () :
+    # create jellyfish topology. it is regular random graph.
+    # k = 4, r = 3, 1 server per 1 swtich
+    # node id 1 - 16 = switch, 17 - 32 = client
+    switchnum = 16
+    clientnum = 16
+    portnum = 4
+    servernumperswitch = 1
+    jellyfish = {}
+
+    # generate server - client links
+    for x in range (1, switchnum + 1) :
+        jellyfish[x] = [x + switchnum]
+        jellyfish[x + switchnum] = [x]
+
+    # generate random link between switches
+    links = []
+    for x in range (1, switchnum + 1) :
+        for linkid in range (portnum - servernumperswitch) :
+            links.append ("%d %d" % (x, linkid)) # "Node Link"
+
+    while links :
+        linkstr = random.choice (links)
+        links.remove (linkstr)
+        id1 = int (linkstr.split (' ')[0])
+
+        linkstr = random.choice (links)
+        links.remove (linkstr)
+        id2 = int (linkstr.split (' ')[0])
+
+        jellyfish[id1].append (id2)
+        jellyfish[id2].append (id1)
+
+    return [jellyfish,
+            map (lambda x: x + switchnum, range (1, clientnum + 1))]
+
+
+# 16 server, 16 switch.
+[jellyfish, jellyfish_client] = generate_random_graph ()
+
 
 
 class Link () :
@@ -533,6 +602,12 @@ if __name__ == '__main__' :
     elif options.topology == 'bcube' :
         links = bcube
         client = bcube_client
+    elif options.topology == 'hyperx' :
+        links = hyperx
+        client = hyperx_client
+    elif options.topology == 'jellyfish' :
+        links = jellyfish
+        client = jellyfish_client
     elif options.topology == 'square' :
         links = square
         client = square_client
