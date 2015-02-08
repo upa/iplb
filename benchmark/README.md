@@ -13,7 +13,11 @@ iplb evaluation on ns-3-dce
   * many packages are required by dce
 5. cd arch/lib/test/buildtop/source/ns-3-dce
 6. ln -s path-to/iplb/benchmark/dce-iplb-topologies.cc examples/
-7. apply ns-3-dce-wscript.patch
-8. generate topology info using dce-topo-gen.py
+7. add flowgen to dce binary.
+  * git clone https://github.com/upa/flowgen.git
+  * cd flowgen && make DCE=yes
+  * cp flowgen path-to/net-next-nuse/arch/lib/test/buildtop/build/sbin/
+8. apply ns-3-dce-wscript.patch
+9. generate topology info using dce-topo-gen.py
   * ex) dce-topo-gen.py -t fattree --iplb --flowdist power > fattree.conf
-9. ./waf --run dce-iplb-topologies
+10. ./waf --run dce-iplb-topologies
