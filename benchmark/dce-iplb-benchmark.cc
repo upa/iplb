@@ -16,7 +16,8 @@ using namespace ns3;
 NS_LOG_COMPONENT_DEFINE ("DceQuaggaFattree");
 
 bool pcap_enable = false;
-
+bool pcapall_enable = false;
+std::string topology_file;
 
 static void
 RunIp (Ptr<Node> node, Time at, std::string str)
@@ -251,6 +252,9 @@ topology_link (char ** args, int argc)
 	NC = NodeContainer (nodes.Get (id1), nodes.Get (id2));
 	NDC = p2p.Install (NC);
 
+	if (pcapall_enable)
+		p2p.EnablePcapAll ("iplb");
+
 	if (pcap_enable) {
 		if (is_client (id1) || is_client (id2)) {
 			p2p.EnablePcap ("iplb", NDC);
@@ -343,7 +347,7 @@ topology_flowgen (char ** args, int argc)
 }
 
 void
-read_topology (void)
+read_topology (const char * config)
 {
 	/*
 	 * createe simulator network from topology info
@@ -352,7 +356,6 @@ read_topology (void)
 
 	int argc;
 	FILE * fp;
-	char config[] = "topology.conf";
 	char * args[16];
 	char buf[256];
 	
@@ -479,19 +482,21 @@ main (int argc, char ** argv)
 	float maxnodetime = 0;
 	unsigned int start, end;
 
-	cmd.AddValue ("pcap", "Enable pcap for client nodes", pcap_enable);
-	cmd.Parse (argc, argv);
-
 	start = time (NULL);
 
-	read_topology ();
+	cmd.AddValue ("pcap", "Enable pcap for client nodes", pcap_enable);
+	cmd.AddValue ("pcapall", "Enable pcap for all links", pcapall_enable);
+	cmd.AddValue ("file", "Topology file", topology_file);
+	cmd.Parse (argc, argv);
+
+	printf ("topology file is %s\n", topology_file.c_str());
+	read_topology (topology_file.c_str());
 
 	for (int n = 0; n < MAXNODE; n++) {
 		maxnodetime = (maxnodetime > NODETIME (n)) ?
 			maxnodetime : NODETIME (n);
 	}
 	printf ("latest command time is %.2f second\n", maxnodetime);
-	printf ("client num %d\n", clientnum);
 	
 	for (int n = 1; n < nodes.GetN (); n++) {
 		std::ostringstream rs, as, ls, lb, fs;
@@ -575,7 +580,7 @@ main (int argc, char ** argv)
 		(float)(mactx_cnt_before + mactx_cnt) * 100);
 
 	end = time (NULL);
-	printf ("finish, %u second\n", end - start);
+	printf ("finish %u second\n", end - start);
 
 	return 0;
 }
