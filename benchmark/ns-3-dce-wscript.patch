@@ -1,0 +1,14 @@
+diff -r 0baf57dd8f75 wscript
+--- a/wscript	Sun Feb 01 21:26:05 2015 +0900
++++ b/wscript	Sun Feb 08 23:59:24 2015 +0900
+@@ -372,6 +372,10 @@
+                        target='bin/linear-udp-perf',
+                        source=['example/linear-udp-perf.cc'])
+ 
++    module.add_example(needed = ['core', 'network', 'internet', 'dce', 'point-to-point' ],
++                       target='bin/dce-iplb-topologies',
++                       source=['example/dce-iplb-topologies.cc'])
++
+     if bld.env['LIB_ASPECT_PATH']:
+         module.add_example(needed = ['core', 'network', 'internet', 'dce', 'point-to-point', 'csma', 'applications'],
+                            target='bin/dce-debug-aspect',
