@@ -197,10 +197,6 @@ class Node () :
         self.spf_nexthop = set ()
         self.spf_incoming = set ()
         self.spf_stacks = []
-
-        # IPLB relay point calculation
-        self.iplb_checked = False
-
         return
 
     def __repr__(self):
@@ -345,18 +341,6 @@ class Topology () :
                 l = node.spf_stacks.pop ()
                 del (l)
 
-            node.iplb_checked = False
-
-        return
-
-    def cleanup_for_iplb (self) :
-
-        for node in self.list_node () :
-            while node.spf_stacks :
-                l = node.spf_stacks.pop ()
-                del (l)
-
-            node.iplb_checked = False
         return
 
     def calculate_spf_candidate_add (self, v, candidate) :
@@ -387,6 +371,17 @@ class Topology () :
 
         return
 
+    def check_same_vertex_on_top_of_stacks (self, incoming) :
+
+        hash = {}
+        for v in incoming :
+            for stack in v.spf_stacks :
+                if hash.has_key (stack[len (stack) - 1].id) :
+                    return True
+                hash[stack[len (stack) - 1].id] = True
+
+        return False
+
     def calculate_spf_candidate_decide (self, candidate) :
 
         distance = -1
@@ -404,6 +399,39 @@ class Topology () :
             print "candidate_decide failed"
             sys.exit (1)
             return
+
+        """
+        iplb relay point search.
+        /* copy relay point stacks. */
+        /* if incoming multiple incoming links exist, ECMPed vertex.
+         * 1. if there is same vertex in top of multiple stacks,
+              push incoming vertexes to each stacks.
+         * 2. if stack of incoming vertex is null, push the incoming vertex.
+         */
+        """
+
+        ecmped = False
+        duplicated = False
+
+        if len (next.spf_incoming) > 1 :
+            ecmped = True
+        if self.check_same_vertex_on_top_of_stacks (next.spf_incoming) :
+            duplicated = True
+
+        for v in next.spf_incoming :
+            # copy stacks
+            for stack in v.spf_stacks :
+                copystack = copy.deepcopy (stack)
+
+                if ecmped and duplicated :
+                    # Term 1 is fulfilled. push the v to stack
+                    copystack.append (v)
+
+                next.spf_stacks.append (copystack)
+
+            if ecmped and not v.spf_stacks :
+                # Term 2 is fullfilled. push the v to stacks as new stack
+                next.spf_stacks.append ([v])
 
         return next
 
@@ -447,169 +475,6 @@ class Topology () :
 
             # add new candidates
             self.calculate_spf_candidate_add (next, candidate)
-
-        return
-
-
-    def calculate_kspf_candidate_add (self, v, candidate, k) :
-
-        for link in v.list_link () :
-            nei = self.find_node (link.neighbor_id (v.id))
-
-            if nei.spf_state == SPF_STATE_NOVISIT :
-                # 1st visit. add to candidate
-                nei.spf_cost = v.spf_cost + 1
-                nei.spf_state = SPF_STATE_CANDIDATE
-                nei.spf_incoming.add (v)
-                candidate.append (nei)
-
-            elif nei.spf_state == SPF_STATE_CANDIDATE :
-                # add new link, and update neighbors incoming links
-                nei.spf_incoming.add (v)
-                shortest = None
-                for incoming in nei.spf_incoming :
-                    if not shortest or incoming.spf_cost < shortest.spf_cost:
-                        shortest = incoming
-                nei.spf_cost = shortest.spf_cost + 1
-
-                # link : k < cost gap to shortest is removed
-                dellist = []
-                for incoming in nei.spf_incoming :
-                    if incoming.spf_cost - shortest.spf_cost > k :
-                        dellist.append (incoming)
-                for incoming in dellist :
-                    nei.spf_incoming.remove (incoming)
-
-            elif nei.spf_state == SPF_STATE_VISITED :
-                # if this link is not visited,
-                # if the cost of new link to visited vertex
-                # fits into k, this link is added to directed link
-                if not nei in v.spf_incoming :
-                    if v.spf_cost - nei.spf_cost < k :
-                        nei.spf_incoming.add (v)
-
-        return
-
-
-    def calculate_kspf_candidate_decide (self, candidate, k) :
-
-        distance = -1
-        next = None
-
-        for v in candidate :
-            if not next or distance < 0 :
-                next = v
-                distance = v.spf_cost
-            elif v.spf_cost < distance :
-                next = v
-                distance = v.spf_cost
-
-        if not next :
-            print "candidate_decide failed"
-            sys.exit (1)
-            return
-
-        return next
-
-
-    def calculate_kspf (self, root, k) :
-
-        self.cleanup_for_spf ()
-
-        candidate = []
-        candidate.append (root)
-
-        while len (candidate) > 0 :
-
-            # select shortest next vertex
-            next = self.calculate_kspf_candidate_decide (candidate, k)
-
-            # process decided next vertex
-            next.spf_state = SPF_STATE_VISITED
-            candidate.remove (next)
-
-            # add new candidates
-            self.calculate_kspf_candidate_add (next, candidate, k)
-
-        return
-
-    def check_ecmped_vertex (self, vertex) :
-        if len (vertex.spf_incoming) > 1 :
-            return True
-        return False
-
-    def check_same_vertex_on_stacks (self, vertex) :
-
-        incoming = vertex.spf_incoming
-
-        hash = {}
-        for v in incoming :
-            for stack in v.spf_stacks :
-                if hash.has_key (stack[len (stack) - 1].id) :
-                    return True
-                hash[stack[len (stack) - 1].id] = True
-
-        return False
-
-    def calculate_iplb_relay (self, dest_id) :
-        """
-        iplb relay point search.
-        /* copy relay point stacks. */
-        /* if incoming multiple incoming links exist, ECMPed vertex.
-         * 1. if there is same vertex in top of multiple stacks,
-              push incoming vertexes to each stacks.
-         * 2. if stack of incoming vertex is null, push the incoming vertex.
-         */
-
-        iplb relay point is calculated recursively from destination vertex.
-        function check_iplb_vertex (V)
-        1. check incoming vretexes of V
-        for Vi in incoming vertexes do
-            if Vi is not checkd then
-                check_iplb_vertex (Vi)
-                
-        duplicated = check_same_vertex_on_top_of_stacks ()
-
-        if V has multiple incoming vertexes then
-            for Vi in incoming vertexes do
-                copy stacks of incoming vertexes to V
-                if the stack is null or duplicated is true then
-                    push Vi to stack
-        """
-
-        dest = self.find_node (dest_id)
-
-        def check_iplb_vertex (v) :
-
-            for incoming in v.spf_incoming :
-                if not incoming.iplb_checked :
-                    check_iplb_vertex (incoming)
-
-            ecmped = self.check_ecmped_vertex (v)
-            duplicated = self.check_same_vertex_on_stacks (v)
-
-            for incoming in v.spf_incoming :
-                # copy stacks
-                for stack in incoming.spf_stacks :
-                    copystack = copy.deepcopy (stack)
-
-                    if ecmped and duplicated :
-                        # term 1 is fullfilled. puth the incoming to stack
-                        copystack.append (incoming)
-
-                    v.spf_stacks.append (copystack)
-
-                if ecmped and not incoming.spf_stacks :
-                    # term 2 is fullfilled. push v to stacks
-                    v.spf_stacks.append ([incoming])
-
-            v.iplb_checked = True
-
-            return
-
-        check_iplb_vertex (dest)
-        return
-
 
 
     def spf_dump (self, root) :
@@ -671,7 +536,7 @@ class Topology () :
                                                  dst.id, dst.loaddr)
 
 
-def main (links, clients, options) :
+def main (links, client, options) :
 
     topo = Topology ()
     topo.read_links (links)
@@ -682,7 +547,7 @@ def main (links, clients, options) :
     if options.iplb :
         topo.enable_iplb ()
 
-    topo.info_dump (clients)
+    topo.info_dump (client)
     topo.node_dump ()
     topo.link_dump ()
 
@@ -699,22 +564,13 @@ def main (links, clients, options) :
             topo.spf_dump (root)
 
         # calculate iplb routing table
-        if options.iplb and root.id in clients :
-            topo.calculate_kspf (root, options.k_shortestpath)
+        if options.iplb and root.id in client :
+            topo.enable_ecmp ()
+            topo.calculate_spf (root)
+            topo.iplb_dump (root, client)
 
-            print "root is %d" % root.id
-            for v in topo.list_node () :
-                print "node %d :" % v.id,
-                print v.spf_incoming
 
-            for client in clients :
-                if client == root.id :
-                    continue
-                topo.cleanup_for_iplb ()
-                topo.calculate_iplb_relay (client)
-                topo.iplb_dump (root, clients)
-
-    topo.bench_random (clients, options.flowdist)
+    topo.bench_random (client, options.flowdist)
 
     return
 
@@ -756,26 +612,26 @@ if __name__ == '__main__' :
 
     if options.topology == 'fattree' :
         links = fattree
-        clients = fattree_client
+        client = fattree_client
     elif options.topology == 'bcube' :
         links = bcube
-        clients = bcube_client
+        client = bcube_client
     elif options.topology == 'hyperx' :
         links = hyperx
-        clients = hyperx_client
+        client = hyperx_client
     elif options.topology == 'jellyfish' :
         links = jellyfish
-        clients = jellyfish_client
+        client = jellyfish_client
     elif options.topology == 'square' :
         links = square
-        clients = square_client
+        client = square_client
     elif options.topology == 'squaretwo' :
         links = squaretwo
-        clients = squaretwo_client
+        client = squaretwo_client
     elif options.topology == 'kpath' :
         links = kpath
-        clients = kpath_client
+        client = kpath_client
     else :
         print "invalid topology type"
 
-    main (links, clients, options)
+    main (links, client, options)
