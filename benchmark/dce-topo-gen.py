@@ -2,6 +2,7 @@
 
 import sys
 import copy
+import time
 import random
 import operator
 from optparse import OptionParser
@@ -129,12 +130,17 @@ def generate_random_graph () :
 
     while links :
         linkstr = random.choice (links)
-        links.remove (linkstr)
         id1 = int (linkstr.split (' ')[0])
-
-        linkstr = random.choice (links)
         links.remove (linkstr)
-        id2 = int (linkstr.split (' ')[0])
+
+        while True :
+            linkstr = random.choice (links)
+            id2 = int (linkstr.split (' ')[0])
+            if id2 in jellyfish[id2] :
+                # this link already exist
+                continue
+            links.remove (linkstr)
+            break
 
         jellyfish[id1].append (id2)
         jellyfish[id2].append (id1)
@@ -184,11 +190,14 @@ class Link () :
 
         return None
 
-
 class Node () :
     def __init__ (self, id) :
         self.id = id
-        self.loaddr = "%s%d" % (loprefix, id)
+        if isinstance (id, str) :
+            [depth, node_id] = map (lambda x: int (x), id.split (' '))
+            self.loaddr = "%s%d" % (loprefix, node_id)
+        else :
+            self.loaddr = "%s%d" % (loprefix, id)
         self.links = {} # neighbor_id : Link, neighbor_id : Link,
 
         # SPF calculation related
@@ -201,10 +210,19 @@ class Node () :
         # IPLB relay point calculation
         self.iplb_checked = False
 
+        # kspf calculation related
+        self.deviation_node = False
+        self.spf_outgoing = set ()
+
         return
 
     def __repr__(self):
-        return "<Node : '%d' >" % self.id
+        if isinstance (self.id, int) :
+            return "<Node : '%d' >" % self.id
+        elif isinstance (self.id, str) :
+            return "<Node : '%s' >" % self.id
+        else :
+            return "<Node : invalidinstance >"
 
     def add_link (self, link) :
         self.links[link.neighbor_id(self.id)] = link
@@ -224,6 +242,68 @@ class Node () :
             print self + " deos not have link to %d" % id
             return None
         return self.links[id]
+
+class KspfPath () :
+    def __init__ (self, path) :
+        self.path = path
+        self.destination = path[len (path) - 1]
+        self.deviation_vertex = self.path[0]
+        self.deviation_vertex_index = 0
+        self.deviation_links = []
+
+        return
+
+    def __repr__(self):
+        return "<KspfPath : '%s' >" % map (lambda x: x.id, self.path)
+
+    def next_deviation_vertex (self) :
+
+        self.deviation_vertex_index += 1
+
+        if self.deviation_vertex_index == len (self.path) - 1:
+            # destination can not be deviation vertex
+            return False
+
+        self.deviation_vertex = self.path[self.deviation_vertex_index]
+
+        return True
+
+    def set_deviation_vertex (self, v) :
+
+        if not v in self.path :
+            print "set_deviation_vertex failed. invalid deviation vertex"
+            sys.exit (1)
+            return
+
+        self.deviation_vertex = v
+        for n in range (len (self.path) - 1) :
+            if self.path[n] == v :
+                self.deviation_vertex_index = n
+        return
+
+    def next_of_vertex (self, v) :
+
+        if not v in self.path :
+            print "next_of_deviation_vertex failed. invalid deviation vertex"
+            sys.exit (1)
+            return
+
+        for n in range (len (self.path) - 1) :
+            if self.path[n] == v :
+                return self.path[n + 1]
+
+        return None
+
+    def extract_route (self, i) :
+        # extract rute from src to i
+        route = []
+        for v in self.path :
+            route.append (v)
+            if v == i :
+                break
+
+        return route
+
 
 class Topology () :
     def __init__ (self) :
@@ -362,7 +442,12 @@ class Topology () :
     def calculate_spf_candidate_add (self, v, candidate) :
 
         for link in v.list_link () :
+
+            # check for kspf dijkstra
             nei = self.find_node (link.neighbor_id (v.id))
+
+            if nei.deviation_node :
+                continue
 
             if nei.spf_state == SPF_STATE_NOVISIT :
                 # 1st visit. add to candidate
@@ -450,87 +535,169 @@ class Topology () :
 
         return
 
+    def extract_spf_route (self, root, dest) :
 
-    def calculate_kspf_candidate_add (self, v, candidate, k) :
+        v = dest
+        route = [v]
 
-        for link in v.list_link () :
-            nei = self.find_node (link.neighbor_id (v.id))
+        while v != root :
+            before = None
+            for incoming in v.spf_incoming :
+                if not before or incoming.id < before.id :
+                    before = incoming
 
-            if nei.spf_state == SPF_STATE_NOVISIT :
-                # 1st visit. add to candidate
-                nei.spf_cost = v.spf_cost + 1
-                nei.spf_state = SPF_STATE_CANDIDATE
-                nei.spf_incoming.add (v)
-                candidate.append (nei)
+            if not before :
+                # there is no complete route.
+                return False
 
-            elif nei.spf_state == SPF_STATE_CANDIDATE :
-                # add new link, and update neighbors incoming links
-                nei.spf_incoming.add (v)
-                shortest = None
-                for incoming in nei.spf_incoming :
-                    if not shortest or incoming.spf_cost < shortest.spf_cost:
-                        shortest = incoming
-                nei.spf_cost = shortest.spf_cost + 1
+            route.insert (0, before)
+            v = before
 
-                # link : k < cost gap to shortest is removed
-                dellist = []
-                for incoming in nei.spf_incoming :
-                    if incoming.spf_cost - shortest.spf_cost > k :
-                        dellist.append (incoming)
-                for incoming in dellist :
-                    nei.spf_incoming.remove (incoming)
+        return route
 
-            elif nei.spf_state == SPF_STATE_VISITED :
-                # if this link is not visited,
-                # if the cost of new link to visited vertex
-                # fits into k, this link is added to directed link
-                if not nei in v.spf_incoming :
-                    if v.spf_cost - nei.spf_cost < k :
-                        nei.spf_incoming.add (v)
+    def create_deviation_path (self, i, kpath) :
 
+        src = i
+        dst = kpath.destination
+
+        kpath_next = kpath.next_of_vertex (src)
+        kpath.deviation_links.append (self.find_link (src.id, kpath_next.id))
+
+        # set up s-i nodes lock
+        self.cleanup_for_kspf ()
+        for v in kpath.path :
+            v.deviation_node = True
+            if v == src :
+                break
+
+        # choice next of current deviation
+
+        pathid = False
+        for link in src.list_link () :
+            #print "try link %d" % src.id, link
+            is_deviated = False
+
+            if self.find_node (link.neighbor_id (src.id)) in kpath.path :
+                #print "    in kpath"
+                is_deviated = True
+
+            if link in kpath.deviation_links :
+                #print "    in deviation_links"
+                is_deviated = True
+
+            if is_deviated :
+                continue
+
+            next = self.find_node (link.neighbor_id (src.id))
+
+            self.calculate_spf (next)
+            pathid = self.extract_spf_route (next, dst)
+
+            if not pathid :
+                kpath.deviation_links.append (link)
+                continue
+            else :
+                break
+
+        if not pathid :
+            return None
+
+        pathsi = kpath.extract_route (src)
+        pathsi.extend (pathid)
+
+        kipath = KspfPath (pathsi)
+
+        # mark new deviation_link
+        link = self.find_link (src.id, next.id)
+        kpath.deviation_links.append (link)
+        #kipath.deviation_links = kpath.deviation_links
+        kipath.deviation_links.append (link)
+
+        kipath.set_deviation_vertex (src)
+
+        return kipath
+
+    def find_min_kpath (self, clist) :
+
+        minpath = None
+
+        for kpath in clist :
+            if not minpath or len (kpath.path) < len (minpath.path) :
+                minpath = kpath
+
+        if not minpath :
+            return False
+
+        clist.remove (minpath)
+
+        return minpath
+
+
+    def calculate_kspf (self, root, dest, k) :
+
+        def check_same_kpath (klist, kpath) :
+            for kp in klist :
+                if str (kp) == str (kpath) :
+                    return True
+            return False
+
+
+
+        klist = []
+        clist = []
+        self.calculate_spf (root)
+
+        shortest_path = self.extract_spf_route (root, dest)
+        if not shortest_path :
+            print >> sys.stderr, "%d to %d route does not exist"  % \
+                (root.id, dest.id)
+            return
+        kpath = KspfPath (shortest_path)
+
+        klist.append (kpath)
+
+        while len (klist) < k :
+
+            #print "MOTO ", kpath
+            #print "MOTO dev", kpath.deviation_links
+            for n in range (len (kpath.path) - 1) :
+
+                i = kpath.deviation_vertex
+
+                # create_deviation_path set up kipath.deviation_vertex and
+                # kipath.deviation_links
+                kipath = self.create_deviation_path (i, kpath)
+                #if kipath :
+                    #print "kipath", kipath
+
+                if (kipath
+                    and not check_same_kpath (clist, kipath)
+                    and not check_same_kpath (klist, kipath)):
+                    clist.append (kipath)
+
+                if not kpath.next_deviation_vertex () :
+                    break
+
+            kpath = self.find_min_kpath (clist)
+            if not kpath :
+                break
+
+            if not check_same_kpath (klist, kpath) :
+                klist.append (kpath)
+
+        #print >> sys.stderr, "calculated k-shortestpaths "
+        #print >> sys.stderr, '\n'.join (map (lambda x: str (x), klist))
+        return klist
+
+    def cleanup_for_kspf (self) :
+        for link in self.list_link () :
+            link.deviation_link = False
+        self.cleanup_for_kspf_node_only ()
         return
 
-
-    def calculate_kspf_candidate_decide (self, candidate, k) :
-
-        distance = -1
-        next = None
-
-        for v in candidate :
-            if not next or distance < 0 :
-                next = v
-                distance = v.spf_cost
-            elif v.spf_cost < distance :
-                next = v
-                distance = v.spf_cost
-
-        if not next :
-            print "candidate_decide failed"
-            sys.exit (1)
-            return
-
-        return next
-
-
-    def calculate_kspf (self, root, k) :
-
-        self.cleanup_for_spf ()
-
-        candidate = []
-        candidate.append (root)
-
-        while len (candidate) > 0 :
-
-            # select shortest next vertex
-            next = self.calculate_kspf_candidate_decide (candidate, k)
-
-            # process decided next vertex
-            next.spf_state = SPF_STATE_VISITED
-            candidate.remove (next)
-
-            # add new candidates
-            self.calculate_kspf_candidate_add (next, candidate, k)
-
+    def cleanup_for_kspf_node_only (self) :
+        for node in self.list_node () :
+            node.deviation_node = False
         return
 
     def check_ecmped_vertex (self, vertex) :
@@ -567,7 +734,7 @@ class Topology () :
         for Vi in incoming vertexes do
             if Vi is not checkd then
                 check_iplb_vertex (Vi)
-                
+
         duplicated = check_same_vertex_on_top_of_stacks ()
 
         if V has multiple incoming vertexes then
@@ -611,7 +778,6 @@ class Topology () :
         return
 
 
-
     def spf_dump (self, root) :
 
         for node in self.list_node () :
@@ -623,8 +789,8 @@ class Topology () :
                 link = self.find_link (root.id, nexthop.id)
                 nexthops.append (link.address (nexthop.id))
 
-            print ("ROUTE %d to %s/32 nexthop %s" %
-                   (root.id, node.loaddr, ' '.join (nexthops)))
+            print ("ROUTE %d to %s/32 nexthop %s cost %d" %
+                   (root.id, node.loaddr, ' '.join (nexthops), node.spf_cost))
 
         return
 
@@ -634,17 +800,14 @@ class Topology () :
         if not self.iplb :
             return
 
-        if not root.id in client :
+        node = self.find_node (client)
+        if not node.spf_stacks :
             return
 
-        for node in self.list_node () :
-            if not node.spf_stacks or not node.id in client :
-                continue
-
-            for stack in node.spf_stacks :
-                relays = ' '.join (map (lambda x: x.loaddr, stack))
-                print ("IPLB %d to %s/32 relays %s" %
-                       (root.id, node.loaddr, relays))
+        for stack in node.spf_stacks :
+            relays = ' '.join (map (lambda x: x.loaddr, stack))
+            print ("IPLB %d to %s/32 relays %s" %
+                   (root.id, node.loaddr, relays))
 
         return
 
@@ -669,6 +832,65 @@ class Topology () :
         for [src, dst] in conbinations :
             print "FLOWGEN %s %d %s -> %d %s" % (flowdist, src.id, src.loaddr,
                                                  dst.id, dst.loaddr)
+
+
+def create_dag_topo_from_kspfs (kspfs) :
+
+    topo = Topology ()
+
+    # create node
+    for kspf in kspfs :
+        depth = 0
+        for node in kspf.path :
+            node_id = "%d %d" % (depth, node.id)
+            if not topo.find_node (node_id) :
+                nnode = Node (node_id)
+                topo.add_node (nnode)
+            depth += 1
+
+    # create link. calculate_iplb_relay only check node.spf_incoming only.
+    # Link is not considered.
+    for kspf in kspfs :
+        for n in range (len (kspf.path) - 1) :
+            src_id = "%d %d" % (n, kspf.path[n].id)
+            dst_id = "%d %d" % (n + 1, kspf.path[n + 1].id)
+            src = topo.find_node (src_id)
+            dst = topo.find_node (dst_id)
+
+            if not dst in src.spf_outgoing :
+                src.spf_outgoing.add (dst)
+
+    return topo
+
+def dump_kspf_topo_iplb (topo, root) :
+
+
+    root_id = "%d %d" % (0, root)
+    rootnode = topo.find_node (root_id)
+
+    def dpfsearch (v, stack, root, is_multi) :
+        #print v.id
+        #time.sleep (1)
+        if len (v.spf_outgoing) == 0 :
+            # bottom
+            relays = ' '.join (stack)
+            print "IPLB %d to %s/32 relays %s" % (root, v.loaddr, relays)
+            return
+
+        if is_multi :
+            stack.append (v.loaddr)
+
+        for outgoing in v.spf_outgoing :
+            if len (v.spf_outgoing) > 1 :
+                dpfsearch (outgoing, copy.deepcopy (stack), root, True)
+            else :
+                dpfsearch (outgoing, copy.deepcopy (stack), root, False)
+
+        return
+
+    stack = []
+    dpfsearch (rootnode, stack, root, False)
+    return
 
 
 def main (links, clients, options) :
@@ -700,19 +922,24 @@ def main (links, clients, options) :
 
         # calculate iplb routing table
         if options.iplb and root.id in clients :
-            topo.calculate_kspf (root, options.k_shortestpath)
-
-            print "root is %d" % root.id
-            for v in topo.list_node () :
-                print "node %d :" % v.id,
-                print v.spf_incoming
-
             for client in clients :
                 if client == root.id :
                     continue
-                topo.cleanup_for_iplb ()
-                topo.calculate_iplb_relay (client)
-                topo.iplb_dump (root, clients)
+
+                if options.k_shortestpath :
+                    kspfs = topo.calculate_kspf (root, topo.find_node (client),
+                                                 options.k_shortestpath)
+
+                    ktopo = create_dag_topo_from_kspfs (kspfs)
+                    dump_kspf_topo_iplb (ktopo, root.id)
+
+                    topo.cleanup_for_kspf ()
+
+                else :
+                    topo.calculate_iplb_relay (client)
+                    topo.iplb_dump (root, client)
+                    topo.cleanup_for_iplb ()
+
 
     topo.bench_random (clients, options.flowdist)
 
@@ -747,7 +974,7 @@ if __name__ == '__main__' :
 
     parser.add_option (
         '-k', '--k-shortestpath', type = "int",
-        default = 1, dest = 'k_shortestpath',
+        default = 0, dest = 'k_shortestpath',
         )
 
 
