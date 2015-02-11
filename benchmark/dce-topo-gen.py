@@ -685,8 +685,8 @@ class Topology () :
             if not check_same_kpath (klist, kpath) :
                 klist.append (kpath)
 
-        #print >> sys.stderr, "calculated k-shortestpaths "
-        #print >> sys.stderr, '\n'.join (map (lambda x: str (x), klist))
+        print >> sys.stderr, "calculated k-shortestpaths "
+        print >> sys.stderr, '\n'.join (map (lambda x: str (x), klist))
         return klist
 
     def cleanup_for_kspf (self) :
@@ -789,8 +789,8 @@ class Topology () :
                 link = self.find_link (root.id, nexthop.id)
                 nexthops.append (link.address (nexthop.id))
 
-            print ("ROUTE %d to %s/32 nexthop %s cost %d" %
-                   (root.id, node.loaddr, ' '.join (nexthops), node.spf_cost))
+            print ("ROUTE %d cost %d to %s/32 nexthop %s" %
+                   (root.id, node.spf_cost, node.loaddr, ' '.join (nexthops)))
 
         return
 
@@ -916,7 +916,7 @@ def main (links, clients, options) :
             id = root.links.keys()[0]
             link = root.links[id]
             gateway = link.address (id)
-            print "ROUTE %d to default nexthop %s" % (root.id, gateway)
+            print "ROUTE %d cost 1 to default nexthop %s" % (root.id, gateway)
         else :
             topo.spf_dump (root)
 

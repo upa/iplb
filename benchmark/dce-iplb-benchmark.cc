@@ -290,15 +290,16 @@ void
 topology_route (char ** args, int argc)
 {
 	/* set up a route entry */
+	/* ROUTE ID cost COST to DSTPREFIX nexthop NEXTHOP */
 	int id;
 	char * prefix;
 	std::ostringstream rt;
 
 	id = atoi (args[1]);
-	prefix = args[3];
+	prefix = args[5];
 
 	rt << "-f inet route add to " << prefix;
-	for (int n = 5; n < argc; n++)
+	for (int n = 7; n < argc; n++)
 		rt << " nexthop via " << args[n];
 
 	RunIp (nodes.Get (id), Seconds (NODETIME (id)), rt.str());
