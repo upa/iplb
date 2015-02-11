@@ -128,6 +128,8 @@ def generate_random_graph () :
         for linkid in range (portnum - servernumperswitch) :
             links.append ("%d %d" % (x, linkid)) # "Node Link"
 
+    no_link = False
+
     while links :
         linkstr = random.choice (links)
         id1 = int (linkstr.split (' ')[0])
@@ -136,13 +138,21 @@ def generate_random_graph () :
         tmplinks = copy.deepcopy (links)
 
         while True :
+            if not tmplinks :
+                # there is no suitable link
+                no_link = True
+                break
+
             linkstr = random.choice (tmplinks)
             id2 = int (linkstr.split (' ')[0])
-            if id2 in jellyfish[id2] :
+            if id2 in jellyfish[id1] :
                 # this link already exist
                 tmplinks.remove (linkstr)
                 continue
             links.remove (linkstr)
+            break
+
+        if no_link :
             break
 
         jellyfish[id1].append (id2)
