@@ -886,8 +886,9 @@ def dump_kspf_topo_iplb (topo, root) :
         #time.sleep (1)
         if len (v.spf_outgoing) == 0 :
             # bottom
-            relays = ' '.join (stack)
-            print "IPLB %d to %s/32 relays %s" % (root, v.loaddr, relays)
+            if stack :
+                relays = ' '.join (stack)
+                print "IPLB %d to %s/32 relays %s" % (root, v.loaddr, relays)
             return
 
         if is_multi :
