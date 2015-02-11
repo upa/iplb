@@ -133,11 +133,14 @@ def generate_random_graph () :
         id1 = int (linkstr.split (' ')[0])
         links.remove (linkstr)
 
+        tmplinks = copy.deepcopy (links)
+
         while True :
-            linkstr = random.choice (links)
+            linkstr = random.choice (tmplinks)
             id2 = int (linkstr.split (' ')[0])
             if id2 in jellyfish[id2] :
                 # this link already exist
+                tmplinks.remove (linkstr)
                 continue
             links.remove (linkstr)
             break
