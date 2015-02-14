@@ -111,21 +111,32 @@ def generate_random_graph () :
     # create jellyfish topology. it is regular random graph.
     # k = 4, r = 3, 1 server per 1 swtich
     # node id 1 - 16 = switch, 17 - 32 = client
-    switchnum = 16
+
+    # k = 4, r = 3, 2 server per 1 switch,
+    switchnum = 20
     clientnum = 16
     portnum = 4
-    servernumperswitch = 1
+    servernumperswitch = 2
     jellyfish = {}
+
+    clientindex = 1 + switchnum
 
     # generate server - client links
     for x in range (1, switchnum + 1) :
-        jellyfish[x] = [x + switchnum]
-        jellyfish[x + switchnum] = [x]
+        jellyfish[x] = []
+
+    for x in range (1, clientnum / servernumperswitch + 1) :
+        for y in range (servernumperswitch) :
+            jellyfish[x].append (clientindex)
+            jellyfish[clientindex] = [x]
+            clientindex += 1
+
 
     # generate random link between switches
     links = []
     for x in range (1, switchnum + 1) :
-        for linkid in range (portnum - servernumperswitch) :
+        rlinknum = portnum - len (jellyfish[x])
+        for linkid in range (rlinknum) :
             links.append ("%d %d" % (x, linkid)) # "Node Link"
 
     no_link = False
@@ -698,8 +709,8 @@ class Topology () :
             if not check_same_kpath (klist, kpath) :
                 klist.append (kpath)
 
-        print >> sys.stderr, "calculated k-shortestpaths "
-        print >> sys.stderr, '\n'.join (map (lambda x: str (x), klist))
+        #print >> sys.stderr, "calculated k-shortestpaths "
+        #print >> sys.stderr, '\n'.join (map (lambda x: str (x), klist))
         return klist
 
     def cleanup_for_kspf (self) :
