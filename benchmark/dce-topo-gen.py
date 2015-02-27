@@ -105,6 +105,21 @@ hyperx = {
     }
 hyperx_client = range (9, 40 + 1)
 
+# 4-port clos topology
+#
+clos = {
+    1 : [ 3, 4, 7, 8 ], 2: [ 3, 4, 7, 8 ],
+    
+    3 : [ 1, 2, 5, 6 ], 4: [ 1, 2, 5, 6 ],
+    5 : [ 3, 4, 11, 12 ], 6 : [ 3, 4, 13, 14],
+
+    7 : [ 1, 2, 9, 10 ], 8 : [ 1, 2, 9, 10 ],
+    9 : [ 7, 8, 15 ,16 ], 10 : [ 7, 8, 17, 18 ],
+
+    11 : [ 5 ], 12 : [ 5 ], 13 : [ 6 ], 14 : [ 6 ],
+    15 : [ 9 ], 16 : [ 9 ], 17 : [ 10 ], 18 : [ 10 ],
+    }
+clos_client = range (11, 18 + 1)
 
 
 def generate_random_graph () :
@@ -1009,6 +1024,9 @@ if __name__ == '__main__' :
     if options.topology == 'fattree' :
         links = fattree
         clients = fattree_client
+    if options.topology == 'clos' :
+        links = clos
+        clients = clos_client
     elif options.topology == 'bcube' :
         links = bcube
         clients = bcube_client
