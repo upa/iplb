@@ -940,7 +940,7 @@ _ipv4_set_ipip_encap (struct sk_buff * skb, __be32 * addr)
 
 	ipiph->version	= IPVERSION;
 	ipiph->ihl	= sizeof (struct iphdr) >> 2;
-	ipiph->tos	= iph->tos;
+	ipiph->tos	= iph->tos ^ IP_DF;
 	ipiph->id	= iph->id;
 	ipiph->frag_off	= 0;
 	ipiph->ttl	= 16;
@@ -1210,9 +1210,6 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 	struct iphdr		* ip;
 	struct relay_tuple	* tuple;
 	struct relay_addr	* relay;
-	struct flowi4	fl4;
-	struct rtable	* rt;
-	struct dst_entry * dst;
 	__be32 original_saddr;
 
 	ip = (struct iphdr *) skb->data;
@@ -1237,6 +1234,12 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 	relay->stats[0].pkt_count++;
 	relay->stats[0].byte_count += skb->len;
 
+#ifdef IPLB_REROUTE_ENCAPED
+
+	struct flowi4	fl4;
+	struct rtable	* rt;
+	struct dst_entry * dst;
+
         /* lookup routing table again for new destination (ourter header) */
 	ip = (struct iphdr *) skb_network_header (skb);
 
@@ -1257,6 +1260,8 @@ nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 
 	skb_dst_drop (skb);
 	skb_dst_set (skb, &rt->dst);
+
+#endif /* IPLB_REROUTE_ENCAPED */
 
 	return NF_ACCEPT;
 }
