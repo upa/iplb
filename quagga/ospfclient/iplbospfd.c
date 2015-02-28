@@ -477,10 +477,11 @@ vertex_candidate_add (struct vertex * v, struct list * candidate,
 				inet_ntop (AF_INET, &llsa->link_id,
 					   ab2, sizeof (ab2));
 				D ("Network %s of %s is not found", ab2, ab1);
-				assert (nei);
+				//assert (nei);
+			} else {
+				vertex_candidate_add_network (v, nei,
+							      candidate, rv);
 			}
-
-			vertex_candidate_add_network (v, nei, candidate, rv);
 			break;
 		}
 
@@ -997,6 +998,10 @@ lsa_update_callback (struct in_addr ifaddr, struct in_addr area_id,
 
 	struct ospf_lsa * lsa;
 
+#ifdef DEBUG
+	D ("%s", inet_ntoa (lsah->id));
+#endif
+
 	lsa = ospf_lsa_new_from_header (lsah);
 	ospf_lsdb_add (lsdb, lsa);
 
@@ -1010,6 +1015,10 @@ lsa_delete_callback (struct in_addr ifaddr, struct in_addr area_id,
 	/* update LSDB, and calculate relay points, and re-install it */
 
 	struct ospf_lsa * lsa, * old;
+
+#ifdef DEBUG
+	D ("%s", inet_ntoa (lsah->id));
+#endif
 
 	lsa = ospf_lsa_new_from_header (lsah);
 
