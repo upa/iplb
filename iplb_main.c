@@ -913,7 +913,38 @@ _ipv4_set_gre_encap (struct sk_buff * skb, __be32 * addr)
 static inline void
 ipv4_set_gre_encap (struct sk_buff * skb, struct relay_addr * relay)
 {
-	int n;
+	int n, len = 0;
+	struct iphdr * ip;
+	struct tcphdr * tcp;
+
+	struct opt_mss {
+		u8 type;
+		u8 len;
+		u16 mss;
+	} * opt;
+
+	/* clamp tcp mss */
+	       ip = (struct iphdr *) skb_network_header (skb);
+	       if (ip->protocol != IPPROTO_TCP)
+	               goto encap;
+
+	       tcp = (struct tcphdr *) skb_transport_header (skb);
+	       if (!tcp->syn)
+		       goto encap;
+
+	       opt = (struct opt_mss *)(tcp + 1);
+	       while (opt->type != 0 && len < tcp->doff) {
+		       if (opt->type == TCP_MAXSEG) {
+			       /* ip hdr + gre hdr = 24 byte */
+			       opt->mss = htons ((ntohs (opt->mss)) -
+						 24 * relay->relay_count);
+			       break;
+		       }
+		       len += opt->len;
+		       opt = (struct opt_mss *)(((char *) opt) + opt->len);
+	       }
+
+encap:
 
 	for (n = relay->relay_count - 1; n >= 0; n--) {
 		_ipv4_set_gre_encap (skb, relay->relay_ip4[n]);
