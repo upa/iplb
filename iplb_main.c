@@ -766,6 +766,13 @@ _iplb_flow_classifier (unsigned long arg)
 			tuple = find_relay_tuple (rtable, AF_INET,
 						  &flow4->daddr, 32);
 
+			if (unlikely (!tuple)) {
+				pr_debug (IPLB_NAME
+					  ":%s: tuple for flow not found\n",
+					  __func__);
+				continue;
+			}
+
 			tc = &tuple->tc;
 
 			if (tc->rmax->index != flow4->relay_index) {
@@ -1316,6 +1323,7 @@ nf_iplb_v4_localin (const struct nf_hook_ops * ops,
 	struct tcphdr * tcp;
 	struct relay_tuple * tuple;
 	struct relay_addr * relay;
+	struct iplb_flow4 * flow4;
 	struct opt_mss {
 		u8 type;
 		u8 len;
@@ -1335,7 +1343,18 @@ nf_iplb_v4_localin (const struct nf_hook_ops * ops,
 	if (!tuple)
 		return NF_ACCEPT;
 
-	relay = lookup_fn (skb, tuple);
+	if (lookup_fn == lookup_relay_addr_from_tuple_flowbase) {
+		/* find outgoing flow */
+		flow4 = find_flow4 (ip->protocol, ip->daddr, ip->saddr,
+				    tcp->dest, tcp->source);
+		if (!flow4 || flow4->relay_index == 0)
+			return NF_ACCEPT;
+
+		relay = tuple->relay_table[flow4->relay_index];
+
+	} else
+		relay = lookup_fn (skb, tuple);
+
 	if (!relay)
 		return NF_ACCEPT;
 
