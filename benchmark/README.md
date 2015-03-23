@@ -27,6 +27,7 @@ iplb evaluation on ns-3-dce
   * git clone https://github.com/upa/flowgen.git
   * cd flowgen && make DCE=yes
   * cp flowgen path-to/net-next-nuse/arch/lib/test/buildtop/build/sbin/
+  * cp tcpgen path-to/net-next-nuse/arch/lib/test/buildtop/build/sbin/
 
 10. add iplb capable iproute2 package
   * cd iplb/iproute2-3.12.0

@@ -99,6 +99,10 @@ is_client (int id)
 #define FLOWCOUNTSTART	(FLOWTIME + FLOWNUM)
 #define STOPTIME	(FLOWTIME + FLOWDURATION + 5)
 
+/* TcpGen related parameters */
+#define TCPFLOWNUM	5
+
+
 static void
 RunFlowgen(Ptr<Node> node, Time at, const char * dist,
 	   const char *src, const char *dst)
@@ -125,7 +129,42 @@ RunFlowgen(Ptr<Node> node, Time at, const char * dist,
 	//apps.Stop(Seconds (at + FLOWDURATION));
 }
 
+static void
+RunTcpgen(Ptr<Node> src_node, Ptr<Node> dst_node,
+	  Time recv_at, Time send_at, const char * dist,
+	  const char *src, const char *dst)
+{
+	/* setup server */
+	DceApplicationHelper recv_process;
+	ApplicationContainer recv_apps;
+	std::ostringstream recv_oss;
 
+	recv_oss << "-s";
+	recv_process.SetBinary ("tcpgen");
+	recv_process.SetStackSize (1 << 20);
+	recv_process.ResetArguments();
+	recv_process.ParseArguments(recv_oss.str().c_str());
+	recv_apps = recv_process.Install (dst_node);
+	recv_apps.Start (recv_at);
+
+	/* setup client */
+	DceApplicationHelper send_process;
+	ApplicationContainer send_apps;
+	std::ostringstream send_oss;
+
+	send_oss << "-c -d " << dst << " -B " << src
+		 << " -n " << TCPFLOWNUM
+		 << " -t " << dist << " -r -m "
+		 << time (NULL) + src_node->GetId() << "";
+	send_process.SetBinary ("tcpgen");
+	send_process.SetStackSize (1 << 20);
+	send_process.ResetArguments();
+	send_process.ParseArguments(send_oss.str().c_str());
+	send_apps = send_process.Install (src_node);
+	send_apps.Start (send_at);
+
+	printf ("%d TCPFlow %s\n", src_node->GetId(), send_oss.str().c_str());
+}
 
 static int
 strsplit(char *str, char **args, int max)
@@ -348,6 +387,25 @@ topology_flowgen (char ** args, int argc)
 }
 
 void
+topology_tcpgen (char ** args, int argc)
+{
+	int src, dst;
+	char * flowdist, * srcip, * dstip;
+
+	flowdist = args[1];
+	src = atoi (args[2]);
+	dst = atoi (args[5]);
+	srcip = args[3];
+	dstip = args[6];
+
+	RunTcpgen (nodes.Get (src), nodes.Get (dst),
+		   Seconds (FLOWTIME - 1), Seconds (FLOWTIME),
+		   flowdist, srcip, dstip);
+
+	return;
+}
+
+void
 read_topology (const char * config)
 {
 	/*
@@ -390,6 +448,8 @@ read_topology (const char * config)
 
 		else if (strncmp (args[0], "FLOWGEN", 7) == 0)
 			topology_flowgen (args, argc);
+		else if (strncmp (args[0], "TCPGEN", 6) == 0)
+			topology_tcpgen (args, argc);
 
 		else {
 			printf ("invalid topology line %s\n", args[0]);
@@ -413,6 +473,11 @@ unsigned long mactx_cnt = 0;
 unsigned long macrx_cnt = 0;
 unsigned long mactx_cnt_before = 0;
 unsigned long macrx_cnt_before = 0;
+
+unsigned long mactx_byte = 0;
+unsigned long macrx_byte = 0;
+unsigned long mactx_byte_before = 0;
+unsigned long macrx_byte_before = 0;
 
 #ifdef TRACEALL
 void
@@ -453,8 +518,10 @@ trace_mactx (std::string path, Ptr<const Packet> packet)
 
         if (countstart < sim_now) {
                 mactx_cnt++;
+		mactx_byte += packet->GetSize();
         } else {
                 mactx_cnt_before++;
+		mactx_byte_before += packet->GetSize();
         }
         return;
 }
@@ -468,8 +535,10 @@ trace_macrx (std::string path, Ptr<const Packet> packet)
 
         if (countstart < sim_now) {
                 macrx_cnt++;
+		macrx_byte += packet->GetSize();
         } else {
                 macrx_cnt_before++;
+		macrx_byte_before += packet->GetSize();
         }
         return;
 }
@@ -579,6 +648,19 @@ main (int argc, char ** argv)
 		(float)(macrx_cnt) / (float)(mactx_cnt) * 100,
 		(float)(macrx_cnt_before + macrx_cnt) /
 		(float)(mactx_cnt_before + mactx_cnt) * 100);
+
+	printf ("\n");
+
+	printf ("PhyTxByte All : %lu\n"
+		"PhyRxByte All : %lu\n"
+		"PhyTxByte Flowgen : %lu\n"
+		"PhyRxByte Flowgen : %lu\n"
+		"ByteRate      : %f\n",
+		mactx_byte_before + mactx_byte,
+		macrx_byte_before + macrx_byte,
+		mactx_byte,
+		macrx_byte,
+		(double)(macrx_byte) / (double)(mactx_byte) * 100);
 
 	end = time (NULL);
 	printf ("finish %u second\n", end - start);

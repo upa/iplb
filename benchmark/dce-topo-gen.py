@@ -851,7 +851,7 @@ class Topology () :
         return
 
 
-    def bench_random (self, client, flowdist) :
+    def bench_random (self, client, flowdist, tool = "FLOWGEN") :
 
         candidate = copy.deepcopy (client)
         conbinations = [] # [[src, dst], [src, dst], [src, dst]]
@@ -869,8 +869,8 @@ class Topology () :
             conbinations.append ([self.find_node (src), self.find_node (dst)])
 
         for [src, dst] in conbinations :
-            print "FLOWGEN %s %d %s -> %d %s" % (flowdist, src.id, src.loaddr,
-                                                 dst.id, dst.loaddr)
+            print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
+                                            dst.id, dst.loaddr)
 
 
 def create_dag_topo_from_kspfs (kspfs) :
@@ -981,7 +981,10 @@ def main (links, clients, options) :
                     topo.cleanup_for_iplb ()
 
 
-    topo.bench_random (clients, options.flowdist)
+    if options.tcp :
+        topo.bench_random (clients, options.flowdist, "TCPGEN")
+    else :
+        topo.bench_random (clients, options.flowdist, "FLOWGEN")
 
     return
 
@@ -1015,6 +1018,11 @@ if __name__ == '__main__' :
     parser.add_option (
         '-k', '--k-shortestpath', type = "int",
         default = 0, dest = 'k_shortestpath',
+        )
+
+    parser.add_option (
+        '-p', '--tcp', action = 'store_true', default = False,
+        dest = 'tcp'
         )
 
 
