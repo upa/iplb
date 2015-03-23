@@ -95,12 +95,11 @@ is_client (int id)
  * PPS * DURATION (sec) = number of packet
  */
 
-#define FLOWTIME	30
+#define TCPFLOWNUM	10
+
+#define FLOWTIME	20
 #define FLOWCOUNTSTART	(FLOWTIME + FLOWNUM)
 #define STOPTIME	(FLOWTIME + FLOWDURATION + 5)
-
-/* TcpGen related parameters */
-#define TCPFLOWNUM	5
 
 
 static void
@@ -163,7 +162,9 @@ RunTcpgen(Ptr<Node> src_node, Ptr<Node> dst_node,
 	send_apps = send_process.Install (src_node);
 	send_apps.Start (send_at);
 
-	printf ("%d TCPFlow %s\n", src_node->GetId(), send_oss.str().c_str());
+	printf ("%d to %d : TCPFlow %s\n",
+		src_node->GetId(), dst_node->GetId(),
+		send_oss.str().c_str());
 }
 
 static int
@@ -399,7 +400,7 @@ topology_tcpgen (char ** args, int argc)
 	dstip = args[6];
 
 	RunTcpgen (nodes.Get (src), nodes.Get (dst),
-		   Seconds (FLOWTIME - 1), Seconds (FLOWTIME),
+		   Seconds (FLOWTIME), Seconds (FLOWTIME + 1),
 		   flowdist, srcip, dstip);
 
 	return;
@@ -425,6 +426,9 @@ read_topology (const char * config)
 	}
 
 	while (fgets (buf, sizeof (buf), fp)) {
+
+		if (buf[0] == '#')
+			continue;
 
 		argc = strsplit (buf, args, 16);
 
@@ -621,6 +625,10 @@ main (int argc, char ** argv)
 		Config::Connect (macrxall.str(), MakeCallback(&trace_macrx));
         }
 
+
+	printf ("flows tart %d\n", FLOWTIME);
+	printf ("flow countstart %d\n", FLOWCOUNTSTART);
+	printf ("stoptime %d\n", STOPTIME);
 
 	Simulator::Stop (Seconds (STOPTIME));
 	Simulator::Run ();
