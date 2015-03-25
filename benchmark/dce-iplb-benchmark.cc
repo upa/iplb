@@ -18,6 +18,7 @@ NS_LOG_COMPONENT_DEFINE ("DceQuaggaFattree");
 bool pcap_enable = false;
 bool pcapall_enable = false;
 std::string topology_file;
+int random_seed = 0;
 
 static void
 RunIp (Ptr<Node> node, Time at, std::string str)
@@ -95,7 +96,7 @@ is_client (int id)
  * PPS * DURATION (sec) = number of packet
  */
 
-#define TCPFLOWNUM	10
+#define TCPFLOWNUM	20
 
 #define FLOWTIME	20
 #define FLOWCOUNTSTART	(FLOWTIME + FLOWNUM)
@@ -115,7 +116,7 @@ RunFlowgen(Ptr<Node> node, Time at, const char * dist,
 	    << " -t " << dist
 	    << " -l " << FLOWLEN << " -r -w"
 	    << " -c " << FLOWCOUNT << " -i " << FLOWINTERVAL
-	    << " -m " << time (NULL) + node->GetId() << "";
+	    << " -m " << random () % 10000 + node->GetId() << "";
 
 	printf ("Flow %s\n", oss.str().c_str());
 
@@ -154,7 +155,7 @@ RunTcpgen(Ptr<Node> src_node, Ptr<Node> dst_node,
 	send_oss << "-c -d " << dst << " -B " << src
 		 << " -n " << TCPFLOWNUM
 		 << " -t " << dist << " -r -m "
-		 << time (NULL) + src_node->GetId() << "";
+		 << random () % 10000 + src_node->GetId() << "";
 	send_process.SetBinary ("tcpgen");
 	send_process.SetStackSize (1 << 20);
 	send_process.ResetArguments();
@@ -288,12 +289,14 @@ topology_link (char ** args, int argc)
 	PointToPointHelper p2p;
 	
 	p2p.SetDeviceAttribute ("DataRate", StringValue (LINKSPEED));
-	p2p.SetChannelAttribute ("Delay", StringValue ("0ms"));
+	p2p.SetChannelAttribute ("Delay", StringValue ("1ms"));
 	NC = NodeContainer (nodes.Get (id1), nodes.Get (id2));
 	NDC = p2p.Install (NC);
 
-	if (pcapall_enable)
-		p2p.EnablePcapAll ("iplb");
+	if (pcapall_enable) {
+		printf ("enable pcap for link between %d and %d\n", id1, id2);
+		p2p.EnablePcap ("iplb", NDC);
+	}
 
 	if (pcap_enable) {
 		if (is_client (id1) || is_client (id2)) {
@@ -561,6 +564,7 @@ main (int argc, char ** argv)
 	cmd.AddValue ("pcap", "Enable pcap for client nodes", pcap_enable);
 	cmd.AddValue ("pcapall", "Enable pcap for all links", pcapall_enable);
 	cmd.AddValue ("file", "Topology file", topology_file);
+	cmd.AddValue ("seed", "Random seed (int)", random_seed);
 	cmd.Parse (argc, argv);
 
 	printf ("topology file is %s\n", topology_file.c_str());
@@ -572,6 +576,12 @@ main (int argc, char ** argv)
 	}
 	printf ("latest command time is %.2f second\n", maxnodetime);
 	
+	/* init random */
+	if (!random_seed)
+		srand (time (NULL));
+	else
+		srand (random_seed);
+
 	for (int n = 1; n < nodes.GetN (); n++) {
 		std::ostringstream rs, as, ls, lb, fs;
 		rs << "route show";

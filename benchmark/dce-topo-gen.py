@@ -19,12 +19,14 @@ SPF_STATE_NOVISIT = 0
 SPF_STATE_CANDIDATE = 1
 SPF_STATE_VISITED = 2
 
+RANDOM_SEED = 10
+BENCH_SEED = None
 
 square = {
-    1 : [ 2, 3, 5 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3, 6 ],
-    5 : [ 1 ], 6 : [ 4 ],
+    1 : [ 2, 3, 5 , 6 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3, 7, 8 ],
+    5 : [ 1 ], 6 : [ 1 ], 7 : [ 4 ], 8 : [ 4 ],
     }
-square_client = [ 5, 6 ]
+square_client = [ 5, 6, 7, 8 ]
 
 
 squaretwo = {
@@ -133,6 +135,8 @@ def generate_random_graph () :
     portnum = 4
     servernumperswitch = 2
     jellyfish = {}
+
+    random.seed (RANDOM_SEED)
 
     clientindex = 1 + switchnum
 
@@ -856,6 +860,8 @@ class Topology () :
         candidate = copy.deepcopy (client)
         conbinations = [] # [[src, dst], [src, dst], [src, dst]]
 
+        random.seed (BENCH_SEED)
+
         if len (candidate) % 2 == 1 :
             # odd number
             rem = random.choice (candidate)
@@ -1025,6 +1031,10 @@ if __name__ == '__main__' :
         dest = 'tcp'
         )
 
+    parser.add_option (
+        '-s', '--seed', type = 'int', default = 0, dest = 'bench_seed'
+        )
+
 
     (options, args) = parser.parse_args ()
 
@@ -1055,5 +1065,9 @@ if __name__ == '__main__' :
         clients = kpath_client
     else :
         print "invalid topology type"
+
+
+    if options.bench_seed :
+        BENCH_SEED = options.bench_seed
 
     main (links, clients, options)
