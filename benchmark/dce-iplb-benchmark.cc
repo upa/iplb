@@ -18,6 +18,7 @@ NS_LOG_COMPONENT_DEFINE ("DceQuaggaFattree");
 bool pcap_enable = false;
 bool pcapall_enable = false;
 std::string topology_file;
+std::string str_random_seed;
 int random_seed = 0;
 
 static void
@@ -564,8 +565,15 @@ main (int argc, char ** argv)
 	cmd.AddValue ("pcap", "Enable pcap for client nodes", pcap_enable);
 	cmd.AddValue ("pcapall", "Enable pcap for all links", pcapall_enable);
 	cmd.AddValue ("file", "Topology file", topology_file);
-	cmd.AddValue ("seed", "Random seed (int)", random_seed);
+	cmd.AddValue ("seed", "Random seed (int)", str_random_seed);
 	cmd.Parse (argc, argv);
+
+	/* init random */
+	if (str_random_seed.size () == 0)
+		srand (time (NULL));
+	else {
+		srand (atoi (str_random_seed.c_str()));
+	}
 
 	printf ("topology file is %s\n", topology_file.c_str());
 	read_topology (topology_file.c_str());
@@ -576,12 +584,6 @@ main (int argc, char ** argv)
 	}
 	printf ("latest command time is %.2f second\n", maxnodetime);
 	
-	/* init random */
-	if (!random_seed)
-		srand (time (NULL));
-	else
-		srand (random_seed);
-
 	for (int n = 1; n < nodes.GetN (); n++) {
 		std::ostringstream rs, as, ls, lb, fs;
 		rs << "route show";

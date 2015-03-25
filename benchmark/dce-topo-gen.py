@@ -878,6 +878,28 @@ class Topology () :
             print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
                                             dst.id, dst.loaddr)
 
+    def bench_all_random (self, client, flowdist, tool = "FLOWGEN") :
+
+        send_candidate = copy.deepcopy (client)
+        recv_candidate = copy.deepcopy (client)
+        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+
+        random.seed (BENCH_SEED)
+
+        while send_candidate :
+            src = random.choice (send_candidate)
+            dst = random.choice (recv_candidate)
+            while src == dst :
+                dst = random.choice (recv_candidate)
+            send_candidate.remove (src)
+            recv_candidate.remove (dst)
+
+            conbinations.append ([self.find_node (src), self.find_node (dst)])
+
+        for [src, dst] in conbinations :
+            print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
+                                            dst.id, dst.loaddr)
+
 
 def create_dag_topo_from_kspfs (kspfs) :
 
