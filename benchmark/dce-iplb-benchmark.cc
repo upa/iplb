@@ -17,9 +17,12 @@ NS_LOG_COMPONENT_DEFINE ("DceQuaggaFattree");
 
 bool pcap_enable = false;
 bool pcapall_enable = false;
+bool flowbase_enable = true;
 std::string topology_file;
 std::string str_random_seed;
 int random_seed = 0;
+std::string str_tcp_flownum;
+int tcp_flownum = 1;
 
 static void
 RunIp (Ptr<Node> node, Time at, std::string str)
@@ -97,11 +100,11 @@ is_client (int id)
  * PPS * DURATION (sec) = number of packet
  */
 
-#define TCPFLOWNUM	20
+#define TCPFLOWNUM	8
 
-#define FLOWTIME	20
+#define FLOWTIME	10
 #define FLOWCOUNTSTART	(FLOWTIME + FLOWNUM)
-#define STOPTIME	(FLOWTIME + FLOWDURATION + 5)
+#define STOPTIME	(FLOWTIME + FLOWDURATION - 5)
 
 
 static void
@@ -154,7 +157,8 @@ RunTcpgen(Ptr<Node> src_node, Ptr<Node> dst_node,
 	std::ostringstream send_oss;
 
 	send_oss << "-c -d " << dst << " -B " << src
-		 << " -n " << TCPFLOWNUM
+		 << " -n " << tcp_flownum
+		 << " -i 1"
 		 << " -t " << dist << " -r -m "
 		 << random () % 10000 + src_node->GetId() << "";
 	send_process.SetBinary ("tcpgen");
@@ -265,10 +269,13 @@ topology_node (char ** args, int argc)
 	INCREMENT_NODETIME (id);
 
 	/* set flowbase */
-	std::ostringstream flowbase;
-	flowbase << "lb set lookup flowbase";
-	RunIp (nodes.Get (id), Seconds (NODETIME (id)), flowbase.str());
-	INCREMENT_NODETIME (id);
+	if (flowbase_enable) {
+		std::ostringstream flowbase;
+		flowbase << "lb set lookup flowbase";
+		RunIp (nodes.Get (id), Seconds (NODETIME (id)),
+		       flowbase.str());
+		INCREMENT_NODETIME (id);
+	}
 
 	return;
 }
@@ -456,6 +463,7 @@ read_topology (const char * config)
 
 		else if (strncmp (args[0], "FLOWGEN", 7) == 0)
 			topology_flowgen (args, argc);
+
 		else if (strncmp (args[0], "TCPGEN", 6) == 0)
 			topology_tcpgen (args, argc);
 
@@ -565,7 +573,9 @@ main (int argc, char ** argv)
 	cmd.AddValue ("pcap", "Enable pcap for client nodes", pcap_enable);
 	cmd.AddValue ("pcapall", "Enable pcap for all links", pcapall_enable);
 	cmd.AddValue ("file", "Topology file", topology_file);
+	cmd.AddValue ("flowbase", "flowbase (default true)", flowbase_enable);
 	cmd.AddValue ("seed", "Random seed (int)", str_random_seed);
+	cmd.AddValue ("tcpflow", "Number of tcp flows (int)", str_tcp_flownum);
 	cmd.Parse (argc, argv);
 
 	/* init random */
@@ -574,6 +584,10 @@ main (int argc, char ** argv)
 	else {
 		srand (atoi (str_random_seed.c_str()));
 	}
+
+	/* setup tcp flownum */
+	if (str_tcp_flownum.size () != 0)
+		tcp_flownum = atoi (str_tcp_flownum.c_str());
 
 	printf ("topology file is %s\n", topology_file.c_str());
 	read_topology (topology_file.c_str());
@@ -671,11 +685,11 @@ main (int argc, char ** argv)
 
 	printf ("\n");
 
-	printf ("PhyTxByte All : %lu\n"
-		"PhyRxByte All : %lu\n"
-		"PhyTxByte Flowgen : %lu\n"
-		"PhyRxByte Flowgen : %lu\n"
-		"ByteRate      : %f\n",
+	printf ("PhyTxByteAll : %lu\n"
+		"PhyRxByteAll : %lu\n"
+		"PhyTxByteFlowgen : %lu\n"
+		"PhyRxByteFlowgen : %lu\n"
+		"ByteRate     : %f\n",
 		mactx_byte_before + mactx_byte,
 		macrx_byte_before + macrx_byte,
 		mactx_byte,

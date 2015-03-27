@@ -19,7 +19,7 @@ SPF_STATE_NOVISIT = 0
 SPF_STATE_CANDIDATE = 1
 SPF_STATE_VISITED = 2
 
-RANDOM_SEED = 10
+RANDOM_SEED = 11
 BENCH_SEED = None
 
 square = {
@@ -130,10 +130,10 @@ def generate_random_graph () :
     # node id 1 - 16 = switch, 17 - 32 = client
 
     # k = 4, r = 3, 2 server per 1 switch,
-    switchnum = 20
+    switchnum = 32
     clientnum = 16
     portnum = 4
-    servernumperswitch = 2
+    servernumperswitch = 1
     jellyfish = {}
 
     random.seed (RANDOM_SEED)
@@ -179,6 +179,10 @@ def generate_random_graph () :
                 # this link already exist
                 tmplinks.remove (linkstr)
                 continue
+            if id1 == id2 :
+                # loop link to same node
+                continue
+
             links.remove (linkstr)
             break
 
