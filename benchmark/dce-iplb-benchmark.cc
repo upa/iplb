@@ -158,7 +158,6 @@ RunTcpgen(Ptr<Node> src_node, Ptr<Node> dst_node,
 
 	send_oss << "-c -d " << dst << " -B " << src
 		 << " -n " << tcp_flownum
-		 << " -i 1"
 		 << " -t " << dist << " -r -m "
 		 << random () % 10000 + src_node->GetId() << "";
 	send_process.SetBinary ("tcpgen");
