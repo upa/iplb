@@ -130,9 +130,13 @@ def generate_random_graph () :
     # node id 1 - 16 = switch, 17 - 32 = client
 
     # k = 4, r = 3, 2 server per 1 switch,
-    switchnum = 32
-    clientnum = 16
-    portnum = 4
+    #switchnum = 20
+    #clientnum = 16
+    #portnum = 4
+    switchnum = 80
+    clientnum = 128
+    portnum = 8
+
     servernumperswitch = 1
     jellyfish = {}
 
@@ -196,8 +200,78 @@ def generate_random_graph () :
             map (lambda x: x + switchnum, range (1, clientnum + 1))]
 
 
+def generate_random_graph2 () :
+
+    switchnum = 80
+    clientnum = 128
+    portnum = 8
+    servernumperswitch = 3
+    jellyfish = {}
+
+    random.seed (RANDOM_SEED)
+
+    for x in range (1, switchnum + clientnum + 1) :
+        jellyfish[x] = []
+
+    # generate switch links
+    clinks = {} # {nodeid : [ 0 ~ portnum-1 ]}
+    slinks = {} # {nodeid : [ 0 ~ portnum-1 ]}
+
+    for x in range (1, switchnum + 1) :
+        slinks[x] = portnum
+
+    # generate node links
+    for x in range (switchnum + 1, switchnum + clientnum + 1) :
+        clinks[x] = 1
+
+    # connect client to switch links
+    while clinks :
+        s = random.choice (slinks.keys ())
+        c = random.choice (clinks.keys ())
+
+        # decrease existing port num
+        slinks[s] -= 1
+        if portnum - slinks[s] > servernumperswitch :
+            continue
+
+        del (clinks[c])
+
+        # add new link to jellyfish
+        jellyfish[s].append (c)
+        jellyfish[c].append (s)
+
+
+    # connect two port poped randomly
+    while slinks :
+
+        id1 = random.choice (slinks.keys ())
+        id2 = random.choice (slinks.keys ())
+
+        if id1 == id2 or id2 in jellyfish[id1]:
+            # same link or existing link
+            if len (slinks.keys ()) < 3 :
+                break
+            else :
+                continue
+
+        # decrease existing port num
+        slinks[id1] -= 1
+        if slinks[id1] == 0 :
+            del (slinks[id1])
+
+        slinks[id2] -= 1
+        if slinks[id2] == 0 :
+            del (slinks[id2])
+
+        # add new link to jellyfish
+        jellyfish[id1].append (id2)
+        jellyfish[id2].append (id1)
+
+    return [jellyfish,
+            map (lambda x: x + switchnum, range (1, clientnum + 1))]
+
 # 16 server, 16 switch.
-[jellyfish, jellyfish_client] = generate_random_graph ()
+[jellyfish, jellyfish_client] = generate_random_graph2 ()
 
 
 

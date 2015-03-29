@@ -2,6 +2,8 @@
  * iplb benchmark for some topologies on ns-3-dce
  */
 
+#define TRACEALL
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -48,7 +50,7 @@ NodeContainer	nodes;
 
 
 /* for link : use NDC and NC for p2p install. */
-#define MAXLINK	256
+#define MAXLINK	4096
 
 #define NDC	link_ndcs[link_ndcs_index]
 #define NC	link_ncs[link_ncs_index]
@@ -65,7 +67,7 @@ NodeContainer link_ncs[MAXLINK];
 
 
 /* command exec time */
-#define MAXNODE	256
+#define MAXNODE	512
 float ntime[MAXNODE]; /* ntime[Nodeid] = Seconds */
 #define NODETIME(id) ntime[id]
 #define INCREMENT_NODETIME(id) ntime[(id)] += 0.01
@@ -85,8 +87,8 @@ is_client (int id)
 }
 
 /* FLowGen related parameters */
-#define LINKSPEED	"8Mbps"	/* 1000000 Byte per sec */
-#define LINKBYTESPEED	1000000	/* byte per sec */
+#define LINKSPEED	"10Mbps"	/* 1000000 Byte per sec */
+#define LINKBYTESPEED	1250000		/* byte per sec */
 #define FLOWNUM		20
 #define FLOWENCAPLEN	1000
 #define FLOWLEN		(FLOWENCAPLEN - 24)	/* - (ip + gre) */
@@ -99,6 +101,8 @@ is_client (int id)
  * 1 / PPS = packet gap (sec), * 1000000 = packet gap (usec)
  * PPS * DURATION (sec) = number of packet
  */
+
+#define MTUSIZE		9000
 
 #define TCPFLOWNUM	8
 
@@ -254,7 +258,7 @@ topology_node (char ** args, int argc)
 
 	/* set up gre tunnel interface */
 
-	std::ostringstream greadd, greup;
+	std::ostringstream greadd, greup, gremtu;
 #if 0
 	greadd << "link add type gre local " << greto;
 	RunIp (nodes.Get (id), Seconds (NODETIME (id)), greadd.str());
@@ -266,6 +270,11 @@ topology_node (char ** args, int argc)
 	greup << "link set dev gre0 up";
 	RunIp (nodes.Get (id), Seconds (NODETIME (id)), greup.str());
 	INCREMENT_NODETIME (id);
+
+	gremtu << "link set dev gre0 mtu " << MTUSIZE - 24;
+	RunIp (nodes.Get (id), Seconds (NODETIME (id)), gremtu.str());
+	INCREMENT_NODETIME (id);
+
 
 	/* set flowbase */
 	if (flowbase_enable) {
@@ -320,6 +329,17 @@ topology_link (char ** args, int argc)
 	     << " dev sim" << NDC.Get(1)->GetIfIndex ();
 	RunIp (nodes.Get (id1), Seconds (NODETIME (id1)), id1a.str());
 	RunIp (nodes.Get (id2), Seconds (NODETIME (id2)), id2a.str());
+	INCREMENT_NODETIME (id1);
+	INCREMENT_NODETIME (id2);
+
+	/* set up mtu size */
+	std::ostringstream mtu1, mtu2;
+	mtu1 << "link set dev sim"
+	     << NDC.Get(0)->GetIfIndex () << " mtu " << MTUSIZE;
+	mtu2 << "link set dev sim"
+	     << NDC.Get(1)->GetIfIndex () << " mtu " << MTUSIZE;
+	RunIp (nodes.Get (id1), Seconds (NODETIME (id1)), mtu1.str());
+	RunIp (nodes.Get (id2), Seconds (NODETIME (id2)), mtu2.str());
 	INCREMENT_NODETIME (id1);
 	INCREMENT_NODETIME (id2);
 
@@ -477,7 +497,7 @@ read_topology (const char * config)
  * packet trace
  */
 
-#ifdef TRACEAALL
+#ifdef TRACEALL
 unsigned long mactxdrop_cnt = 0;
 unsigned long phytxdrop_cnt = 0;
 unsigned long macrxdrop_cnt = 0;
