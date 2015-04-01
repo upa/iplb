@@ -63,6 +63,7 @@ struct iplb_param {
 	int	lookup_weightbase;
 	int	lookup_hashbase;
 	int	lookup_flowbase;
+	int	lookup_rrbase;
 
 	/* set flow related */
 	int	sport;
@@ -203,6 +204,8 @@ parse_args (int argc, char ** argv, struct iplb_param * p)
 			p->lookup_hashbase = 1;
 		} else if (strcmp (*argv, "flowbase") == 0) {
 			p->lookup_flowbase = 1;
+		} else if (strcmp (*argv, "rrbase") == 0) {
+			p->lookup_rrbase = 1;
 		} else if (strcmp (*argv, "proto") == 0 ||
 			   strcmp (*argv, "protocol") == 0) {
 			NEXT_ARG ();
@@ -261,28 +264,28 @@ usage (void)
 	fprintf (stderr,
 		 "\n"
 		 "Usage: ip lb [ { add | del } ]\n"
-		 "             [ prefix PREFIX/LEN ]\n"
-		 "             [ relay ADDRESS,ADDRESS,ADDRESS ]\n"
-		 "             [ weight WEIGHT ]\n"
-		 "             [ type { gre | ipip | lsrr } ]\n"
+		 "          [ prefix PREFIX/LEN ]\n"
+		 "          [ relay ADDRESS,ADDRESS,ADDRESS ]\n"
+		 "          [ weight WEIGHT ]\n"
+		 "          [ type { gre | ipip | lsrr } ]\n"
 		 "\n"
 		 "       ip lb set weight\n"
-		 "             [ prefix PREFIX/LEN ]\n"
-		 "             [ relay ADDRESS ]\n"
-		 "             [ weight WEIGHT ]\n"
+		 "          [ prefix PREFIX/LEN ]\n"
+		 "          [ relay ADDRESS ]\n"
+		 "          [ weight WEIGHT ]\n"
 		 "\n"
 		 "       ip lb set lookup\n"
-		 "             [ { weightbase | hashbase | flowbase } ]\n"
+		 "          [ { weightbase | hashbase | flowbase | rrbase} ]\n"
 		 "\n"
 		 "       ip lb set tunnel src [ ADDRESS ]\n"
 		 "\n"
 		 "       ip lb set flow\n"
-		 "             [ proto PROTONUM]\n"
-		 "             [ src ADDRESS ]\n"
-		 "             [ dst ADDRESS ]\n"
-		 "             [ sport PORTNUM ]\n"
-		 "             [ dport PORTNUM ]\n"
-		 "             [ index INDEX ]\n"
+		 "          [ proto PROTONUM]\n"
+		 "          [ src ADDRESS ]\n"
+		 "          [ dst ADDRESS ]\n"
+		 "          [ sport PORTNUM ]\n"
+		 "          [ dport PORTNUM ]\n"
+		 "          [ index INDEX ]\n"
 		 "\n"
 		 "       ip lb show [ detail ] \n"
 		 "\n"
@@ -628,6 +631,8 @@ do_set_lookup (int argc, char ** argv)
 		cmd = IPLB_CMD_LOOKUP_HASHBASE;
 	} else if (p.lookup_flowbase) {
 		cmd = IPLB_CMD_LOOKUP_FLOWBASE;
+	} else if (p.lookup_rrbase) {
+		cmd = IPLB_CMD_LOOKUP_RRBASE;
 	} else {
 		fprintf (stderr, "invalid lookup type\n");
 		return -1;

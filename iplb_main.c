@@ -104,7 +104,7 @@ struct iplb_rtable {
 	do {						\
 		(rt)->rtable = New_Patricia (maxbits);	\
 		INIT_LIST_HEAD (&(rt)->rlist);		\
-		rwlock_init (&(rt)->lock);	\
+		rwlock_init (&(rt)->lock);		\
 	} while (0)
 
 
@@ -167,6 +167,10 @@ struct relay_tuple {
 
 	/* used by flow_classifier only. Do not touch !! */
 	struct tuple_classifier tc;
+
+	/* index for relay_table used by round robin base. Do not touch !! */
+	int		relay_rr;
+	rwlock_t	lock_rr;
 };
 
 
@@ -354,6 +358,7 @@ add_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 	tuple->weight_sum	= 0;
 	tuple->relay_count	= 0;
 	INIT_LIST_HEAD (&tuple->relay_list);
+	rwlock_init (&tuple->lock_rr);
 
 	pn->data = tuple;
 
@@ -585,6 +590,32 @@ find_smallest_relay_addr_from_tuple (struct relay_tuple * tuple)
 	return smallest;
 }
 #endif
+
+static struct relay_addr *
+find_next_relay_addr_from_tuple (struct relay_tuple * tuple)
+{
+	int idx;
+
+	if (tuple->relay_count == 0)
+		return NULL;
+
+	write_lock_bh (&tuple->lock_rr);
+
+	for (idx = tuple->relay_rr + 1; tuple->relay_table[idx] == NULL;) {
+		if (idx == tuple->relay_rr) {
+			/* go round relay_table, but relay_addr is not found */
+			printk (KERN_ERR IPLB_NAME ": %s failed\n", __func__);
+			return NULL;
+		}
+		idx = (idx + 1) % RELAY_TABLE_SIZE;
+	}
+
+	tuple->relay_rr = idx;
+
+	write_unlock_bh (&tuple->lock_rr);
+
+	return tuple->relay_table[idx];
+}
 
 static void
 patricia_destroy_relay_tuple (void * data)
@@ -822,15 +853,13 @@ _iplb_flow_classifier (unsigned long arg)
 static void
 iplb_flow_classifier (unsigned long arg)
 {
-	unsigned long		next_timer;
-
-	if (lookup_fn != lookup_relay_addr_from_tuple_flowbase)
-		return;
+	unsigned long	next_timer;
 
 	_cleanup_flow (arg);
 	_update_relay_counter (arg);
 
-	_iplb_flow_classifier (arg);
+	if (lookup_fn == lookup_relay_addr_from_tuple_flowbase)
+		_iplb_flow_classifier (arg);
 
 	/* XXX: I think, flow classifier can no be done on 1 sec... */
 	next_timer = jiffies + FLOW_CLASSIFIER_INTERVAL;
@@ -1242,6 +1271,88 @@ lookup_relay_addr_from_tuple_flowbase (struct sk_buff * skb,
 	return tuple->relay_table[idx];
 }
 
+static inline u8
+ipv4_flow_classify_rr (struct sk_buff * skb, struct relay_tuple * tuple)
+{
+	/* flow classifier for round robin assignment */
+
+	u16	sport, dport;
+	struct relay_addr * relay;
+	struct iplb_flow4 * flow4;
+	struct iphdr 	* ip;
+	struct tcphdr	* tcp;
+	struct udphdr	* udp;
+
+	ip = (struct iphdr *) skb_network_header (skb);
+	switch (ip->protocol) {
+	case IPPROTO_TCP :
+		tcp = (struct tcphdr *) IPTRANSPORTHDR (ip);
+		sport = tcp->source;
+		dport = tcp->dest;
+		break;
+	case IPPROTO_UDP :
+		udp = (struct udphdr *) IPTRANSPORTHDR (ip);
+		sport = udp->source;
+		dport = udp->dest;
+		break;
+	case IPPROTO_ICMP :
+		sport = dport = 0;
+		break;
+	default :
+		/* unspported protocol is forwarded natively. */
+		return 0;
+	}
+
+	flow4 = find_flow4 (ip->protocol, ip->saddr, ip->daddr,
+			    sport, dport);
+	if (flow4 == NULL) {
+		flow4 = create_flow4 (ip->protocol, ip->saddr, ip->daddr,
+				      sport, dport, GFP_ATOMIC);
+		if (flow4 == NULL)
+			return 0;
+
+		hash_add_rcu (flow4_table, &flow4->hash, flow4->key);
+	}
+
+	if (flow4->relay_index > RELAY_TABLE_MAX) {
+		printk (KERN_INFO IPLB_NAME ":%s: invalid relay index %u\n",
+			__func__, flow4->relay_index);
+		flow4->relay_index = 0;
+	}
+
+	if (tuple->relay_table[flow4->relay_index] == NULL) {
+		flow4->relay_index = 0;
+	}
+
+	/* assign a relay for new flow by round robin assignment */
+	if (flow4->relay_index == 0) {
+
+		relay = find_next_relay_addr_from_tuple (tuple);
+		flow4->relay_index = relay->index;
+	}
+
+	flow4->stats[0].pkt_count  += 1;
+	flow4->stats[0].byte_count += skb->len;
+	flow4->updated = jiffies;
+
+	return flow4->relay_index;
+}
+
+static struct relay_addr *
+lookup_relay_addr_from_tuple_rrbase (struct sk_buff * skb,
+				 struct relay_tuple * tuple)
+{
+	/* round robin */
+
+	u8 idx;
+
+	idx = ipv4_flow_classify_rr (skb, tuple);
+	if (idx == 0)
+		return NULL;
+
+	return tuple->relay_table[idx];
+}
+
 static unsigned int
 nf_iplb_v4_localout (const struct nf_hook_ops * ops,
 		    struct sk_buff * skb,
@@ -1343,7 +1454,8 @@ nf_iplb_v4_localin (const struct nf_hook_ops * ops,
 	if (!tuple)
 		return NF_ACCEPT;
 
-	if (lookup_fn == lookup_relay_addr_from_tuple_flowbase) {
+	if (lookup_fn == lookup_relay_addr_from_tuple_flowbase ||
+	    lookup_fn == lookup_relay_addr_from_tuple_rrbase) {
 		/* find outgoing flow */
 		flow4 = find_flow4 (ip->protocol, ip->daddr, ip->saddr,
 				    tcp->dest, tcp->source);
@@ -2419,11 +2531,20 @@ iplb_nl_cmd_lookup_flowbase (struct sk_buff * skb, struct genl_info * info)
 
 	lookup_fn = lookup_relay_addr_from_tuple_flowbase;
 
-	/* start flow classifier */
-	mod_timer (&iplb_flow_classifier_timer,
-		   jiffies + FLOW_CLASSIFIER_INTERVAL);
-
 	printk (KERN_INFO "iplb: set lookup function \"flowbase\"\n");
+
+	return 0;
+}
+
+static int
+iplb_nl_cmd_lookup_rrbase (struct sk_buff * skb, struct genl_info * info)
+{
+	if (lookup_fn == lookup_relay_addr_from_tuple_rrbase)
+		return 0;
+
+	lookup_fn = lookup_relay_addr_from_tuple_rrbase;
+
+	printk (KERN_INFO "iplb: set lookup function \"rrbase\"\n");
 
 	return 0;
 }
@@ -2590,6 +2711,12 @@ static struct genl_ops iplb_nl_ops[] = {
 //		.flags	= GENL_ADMIN_PERM,
 	},
 	{
+		.cmd	= IPLB_CMD_LOOKUP_RRBASE,
+		.doit	= iplb_nl_cmd_lookup_rrbase,
+		.policy	= iplb_nl_policy,
+//		.flags	= GENL_ADMIN_PERM,
+	},
+	{
 		.cmd	= IPLB_CMD_PREFIX4_FLUSH,
 		.doit	= iplb_nl_cmd_prefix4_flush,
 		.policy	= iplb_nl_policy,
@@ -2627,10 +2754,14 @@ __init iplb_init_module (void)
 	INIT_IPLB_RTABLE (&rtable6, 64);
 
 
-	/* timer for flow is enbled when lookup_fun is set to flowbase */
+	/* timer for flow counter and cleanup */
 	init_timer_deferrable (&iplb_flow_classifier_timer);
 	iplb_flow_classifier_timer.function = iplb_flow_classifier;
 	iplb_flow_classifier_timer.data = 0;
+	mod_timer (&iplb_flow_classifier_timer,
+		   jiffies + FLOW_CLASSIFIER_INTERVAL);
+
+
 
 	rc = genl_register_family_with_ops (&iplb_nl_family, iplb_nl_ops);
 	if (rc < 0)

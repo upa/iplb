@@ -54,3 +54,5 @@ pkt_gen
 
 core
 *.bak
+
+*.sh
