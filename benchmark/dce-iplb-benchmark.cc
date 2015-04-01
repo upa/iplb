@@ -19,7 +19,7 @@ NS_LOG_COMPONENT_DEFINE ("DceQuaggaFattree");
 
 bool pcap_enable = false;
 bool pcapall_enable = false;
-bool flowbase_enable = true;
+bool flowbase_enable = false;
 std::string topology_file;
 std::string str_random_seed;
 int random_seed = 0;
@@ -275,6 +275,12 @@ topology_node (char ** args, int argc)
 	RunIp (nodes.Get (id), Seconds (NODETIME (id)), gremtu.str());
 	INCREMENT_NODETIME (id);
 
+
+	std::ostringstream rrbase;
+	rrbase << "lb set lookup rrbase";
+	RunIp (nodes.Get (id), Seconds (NODETIME (id)),
+	       rrbase.str());
+	INCREMENT_NODETIME (id);
 
 	/* set flowbase */
 	if (flowbase_enable) {
@@ -592,7 +598,7 @@ main (int argc, char ** argv)
 	cmd.AddValue ("pcap", "Enable pcap for client nodes", pcap_enable);
 	cmd.AddValue ("pcapall", "Enable pcap for all links", pcapall_enable);
 	cmd.AddValue ("file", "Topology file", topology_file);
-	cmd.AddValue ("flowbase", "flowbase (default true)", flowbase_enable);
+	cmd.AddValue ("flowbase", "flowbase (default false)", flowbase_enable);
 	cmd.AddValue ("seed", "Random seed (int)", str_random_seed);
 	cmd.AddValue ("tcpflow", "Number of tcp flows (int)", str_tcp_flownum);
 	cmd.Parse (argc, argv);
