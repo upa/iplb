@@ -67,7 +67,7 @@ NodeContainer link_ncs[MAXLINK];
 
 
 /* command exec time */
-#define MAXNODE	512
+#define MAXNODE	1024
 float ntime[MAXNODE]; /* ntime[Nodeid] = Seconds */
 #define NODETIME(id) ntime[id]
 #define INCREMENT_NODETIME(id) ntime[(id)] += 0.01

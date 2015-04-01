@@ -965,6 +965,35 @@ class Topology () :
             print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
                                             dst.id, dst.loaddr)
 
+    def bench_random_conbination (self, client) :
+
+        candidate = copy.deepcopy (client)
+        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+
+        random.seed (BENCH_SEED)
+
+        if len (candidate) % 2 == 1 :
+            # odd number
+            rem = random.choice (candidate)
+            candidate.remove (rem)
+
+        while candidate :
+            src = random.choice (candidate)
+            candidate.remove (src)
+            dst = random.choice (candidate)
+            candidate.remove (dst)
+            conbinations.append ([self.find_node (src), self.find_node (dst)])
+
+        return conbinations
+
+    def bench_random_conbination_print (self, conbinations, flowdist,
+                                        tool = "FLOWGEN") :
+
+        for [src, dst] in conbinations :
+            print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
+                                            dst.id, dst.loaddr)
+
+
     def bench_all_random (self, client, flowdist, tool = "FLOWGEN") :
 
         send_candidate = copy.deepcopy (client)
@@ -1063,6 +1092,8 @@ def main (links, clients, options) :
     topo.node_dump ()
     topo.link_dump ()
 
+    conbination = topo.bench_random_conbination (clients)
+
     for root in topo.list_node () :
 
         # calculate routing table.
@@ -1076,30 +1107,32 @@ def main (links, clients, options) :
             topo.spf_dump (root)
 
         # calculate iplb routing table
-        if options.iplb and root.id in clients :
+        if options.iplb and not options.k_shortestpath and root.id in clients :
             for client in clients :
                 if client == root.id :
                     continue
 
-                if options.k_shortestpath :
-                    kspfs = topo.calculate_kspf (root, topo.find_node (client),
-                                                 options.k_shortestpath)
+                topo.calculate_iplb_relay (client)
+                topo.iplb_dump (root, client)
+                topo.cleanup_for_iplb ()
+                    
 
-                    ktopo = create_dag_topo_from_kspfs (kspfs)
-                    dump_kspf_topo_iplb (ktopo, root.id)
+    # calculate iplb routing table
+    for [src, dst] in conbination :
 
-                    topo.cleanup_for_kspf ()
+        if options.k_shortestpath :
+            kspfs = topo.calculate_kspf (src, dst, options.k_shortestpath)
+            ktopo = create_dag_topo_from_kspfs (kspfs)
+            dump_kspf_topo_iplb (ktopo, src.id)
 
-                else :
-                    topo.calculate_iplb_relay (client)
-                    topo.iplb_dump (root, client)
-                    topo.cleanup_for_iplb ()
+            topo.cleanup_for_kspf ()
 
 
     if options.tcp :
-        topo.bench_random (clients, options.flowdist, "TCPGEN")
+        topo.bench_random_conbination_print (conbination, options.flowdist,
+                                             "TCPGEN")
     else :
-        topo.bench_random (clients, options.flowdist, "FLOWGEN")
+        topo.bench_random_conbination_print (conbination, options.flowdist)
 
     return
 
