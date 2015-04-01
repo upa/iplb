@@ -56,3 +56,4 @@ core
 *.bak
 
 *.sh
+*.conf

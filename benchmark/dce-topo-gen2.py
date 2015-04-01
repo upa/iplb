@@ -234,14 +234,18 @@ def generate_random_graph2 () :
         clinks[x] = 1
 
     # connect client to switch links
+    n = 0
     while clinks :
-        s = random.choice (slinks.keys ())
+
         c = random.choice (clinks.keys ())
+        s = slinks.keys ()[n]
+        n = (n + 1) % len (slinks.keys ())
+
+        if portnum - slinks[s] > servernumperswitch :
+            continue
 
         # decrease existing port num
         slinks[s] -= 1
-        if portnum - slinks[s] > servernumperswitch :
-            continue
 
         del (clinks[c])
 
