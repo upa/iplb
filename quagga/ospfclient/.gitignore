@@ -3,6 +3,7 @@ Makefile.in
 *.o
 ospfclient
 iplbospfd
+iplbkspfd
 tags
 TAGS
 .deps

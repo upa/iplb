@@ -5,7 +5,7 @@ INCLUDES = @INCLUDES@ -I.. -I$(top_srcdir) -I$(top_srcdir)/lib -I$(top_builddir)
 lib_LTLIBRARIES = libospfapiclient.la libnetlink.la libgenl.la
 libospfapiclient_la_LDFLAGS = -version-info 0:0:0
 
-sbin_PROGRAMS = ospfclient iplbospfd
+sbin_PROGRAMS = ospfclient iplbospfd iplbkspfd
 
 libospfapiclient_la_SOURCES = \
 	ospf_apiclient.c
@@ -45,3 +45,14 @@ iplbospfd_LDADD = libospfapiclient.la \
 
 iplbospfd_CFLAGS = $(AM_CFLAGS) $(PICFLAGS)
 iplbospfd_LDFLAGS = $(AM_LDFLAGS) $(PILDFLAGS)
+
+# iplbkspfd
+iplkspfd_SOURCES = \
+	iplbkspfd.c
+
+iplbkspfd_LDADD = libospfapiclient.la \
+	../ospfd/libospf.la ../lib/libzebra.la \
+	@LIBCAP@
+
+iplbkspfd_CFLAGS = $(AM_CFLAGS) $(PICFLAGS)
+iplbkspfd_LDFLAGS = $(AM_LDFLAGS) $(PILDFLAGS)
