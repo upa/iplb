@@ -50,6 +50,7 @@ struct thread_master * master;
 struct ospf_apiclient * oc;
 struct ospf_lsdb * lsdb;
 static char * kspfc = NULL;
+static char * own_router = NULL;
 static char * output = NULL;
 
 static struct ospf_lsa *
@@ -211,6 +212,7 @@ iplbkspfd_lsa_read (struct thread * thread)
 	int fd;
 	int ret;
 	FILE * fp;
+	char cmdbuf[512];
 	struct pollfd x[1];
 
 	oc = THREAD_ARG (thread);
@@ -244,6 +246,14 @@ iplbkspfd_lsa_read (struct thread * thread)
 		fflush (fp);
 		if (fp != stdout)
 			fclose (fp);
+
+		/* exec kspfc command */
+		if (kspfc && output && own_router) {
+			snprintf (cmdbuf, sizeof (cmdbuf), "%s %s %s",
+				  kspfc, output, own_router);
+			D ("exec %s", cmdbuf);
+			ret = system (cmdbuf);
+		}
 	}
 
 	thread_add_read (master, iplbkspfd_lsa_read, oc, fd);
@@ -290,6 +300,7 @@ usage ()
 	printf ("usage of iplbkspfd\n"
 		"\t -s : ospfd api server address\n"
 		"\t -k : kspfc script path\n"
+		"\t -r : own router id\n"
 		"\t -f : output file for kspfc script (default stdout)\n"
 		);
 
@@ -308,13 +319,16 @@ main (int argc, char ** argv)
 
 	lsdb = ospf_lsdb_new ();
 
-	while ((ch = getopt (argc, argv, "s:k:f:")) != -1) {
+	while ((ch = getopt (argc, argv, "s:k:r:f:")) != -1) {
 		switch (ch) {
 		case 's' :
 			apisrv = optarg;
 			break;
 		case 'k' :
 			kspfc = optarg;
+			break;
+		case 'r' :
+			own_router = optarg;
 			break;
 		case 'f' :
 			output = optarg;
@@ -327,11 +341,6 @@ main (int argc, char ** argv)
 
 	if (!apisrv) {
 		D ("-s api server must be specified");
-		return 1;
-	}
-
-	if (!kspfc) {
-		D ("-k kpsfc script path must be specified");
 		return 1;
 	}
 
