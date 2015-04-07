@@ -202,19 +202,26 @@ def generate_random_graph () :
 
 def generate_random_graph2 () :
 
-    #portnum = 6
-    #clientnum = 54
-    #switchnum = 45
+    portnum = 6
+    clientnum = 54
+    switchnum = 45
+    servernumperswitch = 3
 
-    portnum = 8
-    clientnum = 128
-    switchnum = 80
+    #portnum = 8
+    #clientnum = 128
+    #switchnum = 80
+    #servernumperswitch = 4
+
+    #portnum = 10
+    #clientnum = 250
+    #switchnum = 125
+    #servernumperswitch = 5
     
     #portnum = 12
     #clientnum = 432
     #switchnum = 180
+    #servernumperswitch = 2
 
-    servernumperswitch = 3
     jellyfish = {}
 
     random.seed (RANDOM_SEED)
@@ -239,19 +246,17 @@ def generate_random_graph2 () :
 
         c = random.choice (clinks.keys ())
         s = slinks.keys ()[n]
-        n = (n + 1) % len (slinks.keys ())
-
-        if portnum - slinks[s] > servernumperswitch :
-            continue
 
         # decrease existing port num
         slinks[s] -= 1
-
         del (clinks[c])
 
         # add new link to jellyfish
         jellyfish[s].append (c)
         jellyfish[c].append (s)
+
+        if portnum - slinks[s] >= servernumperswitch :
+            n = (n + 1) % len (slinks.keys ())
 
 
     # connect two port poped randomly
@@ -262,7 +267,7 @@ def generate_random_graph2 () :
 
         if id1 == id2 or id2 in jellyfish[id1]:
             # same link or existing link
-            if len (slinks.keys ()) < 3 :
+            if len (slinks.keys ()) < 4 :
                 break
             else :
                 continue
