@@ -52,6 +52,7 @@ struct ospf_lsdb * lsdb;
 static char * kspfc = NULL;
 static char * own_router = NULL;
 static char * output = NULL;
+static int debug_mode = 0;
 
 static struct ospf_lsa *
 ospf_lsa_new_from_header (struct lsa_header * lsah)
@@ -66,7 +67,6 @@ ospf_lsa_new_from_header (struct lsa_header * lsah)
 	return new;
 }
 
-#if 0
 static void
 ospf_lsdb_dump (struct ospf_lsdb * db)
 {
@@ -94,7 +94,6 @@ ospf_lsdb_dump (struct ospf_lsdb * db)
 
 	return;
 }
-#endif
 
 static void
 dump_network_lsa (struct ospf_lsdb * db, struct network_lsa * nlsa, FILE * fp)
@@ -113,12 +112,14 @@ dump_network_lsa (struct ospf_lsdb * db, struct network_lsa * nlsa, FILE * fp)
 	     len -= sizeof (struct in_addr)) {
 
 		if (adv_router.s_addr == attached->s_addr)
-			continue;
+			goto next;
 
 		inet_ntop (AF_INET, attached, ab2, sizeof (ab2));
 		
 		snprintf (buf, sizeof (buf), "NETWORK %s %s\n", ab1, ab2);
 		fputs (buf, fp);
+
+	next:
 		attached++;
 	}
 }
@@ -229,6 +230,11 @@ iplbkspfd_lsa_read (struct thread * thread)
 	x[0].events = POLLIN;
 	if (poll (x, 1, 0) == 0) {
 		/* create link info for iplb-kspf.py */
+
+		if (debug_mode) {
+			ospf_lsdb_dump (lsdb);
+		}
+
 		D ("update LSDB !");
 		if (output) {
 			fp = fopen (output, "w");
@@ -319,7 +325,7 @@ main (int argc, char ** argv)
 
 	lsdb = ospf_lsdb_new ();
 
-	while ((ch = getopt (argc, argv, "s:k:r:f:")) != -1) {
+	while ((ch = getopt (argc, argv, "s:k:r:f:d")) != -1) {
 		switch (ch) {
 		case 's' :
 			apisrv = optarg;
@@ -332,6 +338,9 @@ main (int argc, char ** argv)
 			break;
 		case 'f' :
 			output = optarg;
+			break;
+		case 'd' :
+			debug_mode = 1;
 			break;
 		default :
 			usage ();
