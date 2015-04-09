@@ -202,10 +202,10 @@ def generate_random_graph () :
 
 def generate_random_graph2 () :
 
-    portnum = 6
-    clientnum = 54
-    switchnum = 45
-    servernumperswitch = 3
+    #portnum = 6
+    #clientnum = 54
+    #switchnum = 45
+    #servernumperswitch = 3
 
     #portnum = 8
     #clientnum = 128
@@ -217,10 +217,10 @@ def generate_random_graph2 () :
     #switchnum = 125
     #servernumperswitch = 5
     
-    #portnum = 12
-    #clientnum = 432
-    #switchnum = 180
-    #servernumperswitch = 2
+    portnum = 12
+    clientnum = 432
+    switchnum = 180
+    servernumperswitch = 6
 
     jellyfish = {}
 

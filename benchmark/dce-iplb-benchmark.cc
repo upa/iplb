@@ -20,6 +20,7 @@ NS_LOG_COMPONENT_DEFINE ("DceQuaggaFattree");
 bool pcap_enable = false;
 bool pcapall_enable = false;
 bool flowbase_enable = false;
+bool minimize_enable = false;
 std::string topology_file;
 std::string str_random_seed;
 int random_seed = 0;
@@ -216,6 +217,10 @@ topology_info (char ** args, int argc)
         processManager.SetNetworkStack("ns3::LinuxSocketFdFactory", "Library",
                                        StringValue ("liblinux.so"));
 	processManager.Install (nodes);
+	if (minimize_enable) {
+		processManager.SetAttribute ("MinimizeOpenFiles",
+					     BooleanValue (1));
+	}
 
 	LinuxStackHelper stack;
 	stack.Install (nodes);
@@ -601,6 +606,7 @@ main (int argc, char ** argv)
 	cmd.AddValue ("flowbase", "flowbase (default false)", flowbase_enable);
 	cmd.AddValue ("seed", "Random seed (int)", str_random_seed);
 	cmd.AddValue ("tcpflow", "Number of tcp flows (int)", str_tcp_flownum);
+	cmd.AddValue ("minimize", "do not open files-*", minimize_enable);
 	cmd.Parse (argc, argv);
 
 	/* init random */
