@@ -9,9 +9,6 @@ from optparse import OptionParser
 from argparse import ArgumentParser
 
 
-# 1.0.0.NodeID/32
-loprefix = "1.0.0."
-
 global linkbase
 linkbase = 0
 
@@ -334,9 +331,9 @@ class Node () :
         self.id = id
         if isinstance (id, str) :
             [depth, node_id] = map (lambda x: int (x), id.split (' '))
-            self.loaddr = "%s%d" % (loprefix, node_id)
+            self.loaddr = self.id2loaddr (node_id)
         else :
-            self.loaddr = "%s%d" % (loprefix, id)
+            self.loaddr = self.id2loaddr (id)
         self.links = {} # neighbor_id : Link, neighbor_id : Link,
 
         # SPF calculation related
@@ -362,6 +359,14 @@ class Node () :
             return "<Node : '%s' >" % self.id
         else :
             return "<Node : invalidinstance >"
+
+    def id2loaddr (self, node_id) :
+        # 1.X.X.X/24
+        o1 = node_id / (255 ** 2)
+        o2 = (node_id - o1 * 255 ** 2) / 255
+        o3 = (node_id - (o1 * 255 ** 2 + o2 * 255))
+        o3 += 1 # remove .0
+        return "1.%d.%d.%d" % (o1, o2, o3)
 
     def add_link (self, link) :
         self.links[link.neighbor_id(self.id)] = link
