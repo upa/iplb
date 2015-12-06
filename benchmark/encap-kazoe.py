@@ -23,7 +23,7 @@ SPF_STATE_VISITED = 2
 RANDOM_SEED = 11
 BENCH_SEED = None
 
-hogehoge = 0
+widthfirst = False
 
 
 def generate_random_graph3 (portnum = 4) :
@@ -113,6 +113,8 @@ class Link () :
         global linkbase
         self.id1 = id1
         self.id2 = id2
+        self.node1 = None # pointer of Node class id1
+        self.node2 = None # pointer of Node class id2
         self.linkbase = linkbase
         self.id1_addr = self.id2addr (self.id1, self.linkbase)
         self.id2_addr = self.id2addr (self.id2, self.linkbase)
@@ -122,6 +124,13 @@ class Link () :
 
     def __repr__(self):
         return "<Link '%d' : '%d'>" % (self.id1, self.id2)
+
+    def getnode (self, id) :
+        if self.id1 == id :
+            return self.node1
+        elif self.id2 == id :
+            return self.node2
+        return
 
     def id2addr (self, id, linkbase) :
         # 100.X.X.(1|2)/24
@@ -163,6 +172,9 @@ class Node () :
         self.loaddr = "10.0.%d.%d" % (o3, o4)
 
         self.links = {} # neighbor_id : Link, neighbor_id : Link,
+
+        # is node or switch
+        self.isnode = False
 
         # SPF calculation related
         self.spf_distance = -1
@@ -206,6 +218,16 @@ class Node () :
             print self + " deos not have link to %d" % id
             return None
         return self.links[id]
+
+    def switch_of_this_client (self) :
+        # return switch that this connected :
+        if not self.isnode :
+            print "This node %s is not client" % self
+            return
+        
+        link = self.links[self.links.keys ()[0]]
+        return link.getnode (link.neighbor_id (self.id))
+
 
 class KspfPath () :
     def __init__ (self, path) :
@@ -345,6 +367,20 @@ class Topology () :
 
         return
 
+    def fill_links (self) :
+        # fill link->node1/2
+        for link in self.list_link () :
+            link.node1 = self.find_node (link.id1)
+            link.node2 = self.find_node (link.id2)
+        return
+
+    def mark_nodes (self, clients) :
+        for node in self.list_node () :
+            if node.id in clients :
+                node.isnode = True
+        return
+
+
     def dump (self) :
 
         for node in self.list_node () :
@@ -408,7 +444,11 @@ class Topology () :
         for link in v.list_link () :
 
             # check for kspf dijkstra
-            nei = self.find_node (link.neighbor_id (v.id))
+            nei = link.getnode (link.neighbor_id (v.id))
+            #nei = self.find_node (link.neighbor_id (v.id))
+
+            if nei.isnode :
+                continue
 
             if nei.deviation_node :
                 continue
@@ -436,20 +476,6 @@ class Topology () :
 
         return
 
-    def calculate_spf_candidate_decide (self, candidate) :
-
-        _, v = heapq.heappop (candidate)
-
-        global hogehoge
-        if hogehoge > 5 : sys.exit (1)
-
-        if not v :
-            print "candidate_decide failed"
-            sys.exit (1)
-            return
-
-        return v
-
 
     def calculate_spf (self, root) :
 
@@ -461,7 +487,7 @@ class Topology () :
         while len (candidate) > 0 :
 
             # select shortest next vertex
-            next = self.calculate_spf_candidate_decide (candidate)
+            _, next = heapq.heappop (candidate)
 
             # process decided next vertex
             next.spf_state = SPF_STATE_VISITED
@@ -502,7 +528,7 @@ class Topology () :
         while len (candidate) > 0 :
 
             # select shortest next vertex
-            next = self.calculate_spf_candidate_decide (candidate)
+            _, next = heapq.heappop (candidate)
 
             # process decided next vertex
             next.spf_state = SPF_STATE_VISITED
@@ -520,6 +546,7 @@ class Topology () :
                     else :
                         if incoming.id > v.id :
                             incoming = v
+
                 if incoming == root :
                     next.spf_nexthop.add (next)
                 elif incoming :
@@ -536,6 +563,30 @@ class Topology () :
             self.calculate_spf_candidate_add (next, candidate)
 
         return
+
+    def calculate_spf_dst_wf (self, root, dst) :
+
+        self.cleanup_for_spf ()
+
+        stack = set ()
+        stack.add (root)
+
+        while len (stack) > 0 :
+
+            v = stack.pop ()
+            v.spf_state = SPF_STATE_VISITED
+
+            if v.id == dst.id :
+                return
+
+            for link in v.list_link () :
+                nextv = link.getnode (link.neighbor_id (v.id))
+                if nextv.spf_state == SPF_STATE_NOVISIT :
+                    nextv.spf_incoming.add (v)
+                    stack.add (nextv)
+
+        return
+
 
     def extract_spf_route (self, root, dest) :
 
@@ -566,7 +617,7 @@ class Topology () :
         kpath.deviation_links.append (self.find_link (src.id, kpath_next.id))
 
         # set up s-i nodes lock
-        self.cleanup_for_kspf ()
+        #self.cleanup_for_kspf ()
         for v in kpath.path :
             v.deviation_node = True
             if v == src :
@@ -579,7 +630,8 @@ class Topology () :
             #print "try link %d" % src.id, link
             is_deviated = False
 
-            if self.find_node (link.neighbor_id (src.id)) in kpath.path :
+            if link.getnode (link.neighbor_id (src.id)) in kpath.path :
+            #if self.find_node (link.neighbor_id (src.id)) in kpath.path :
                 #print "    in kpath"
                 is_deviated = True
 
@@ -590,9 +642,13 @@ class Topology () :
             if is_deviated :
                 continue
 
-            next = self.find_node (link.neighbor_id (src.id))
+            next = link.getnode (link.neighbor_id (src.id))
+            #next = self.find_node (link.neighbor_id (src.id))
 
-            self.calculate_spf_dst (next, dst)
+            if not widthfirst :
+                self.calculate_spf_dst (next, dst)
+            else :
+                self.calculate_spf_dst_wf (next, dst)
             pathid = self.extract_spf_route (next, dst)
 
             if not pathid :
@@ -600,6 +656,9 @@ class Topology () :
                 continue
             else :
                 break
+
+        for v in kpath.path :
+            v.deviation_node = False
 
         if not pathid :
             return None
@@ -619,21 +678,6 @@ class Topology () :
 
         return kipath
 
-    def find_min_kpath (self, clist) :
-
-        minpath = None
-
-        for kpath in clist :
-            if not minpath or len (kpath.path) < len (minpath.path) :
-                minpath = kpath
-
-        if not minpath :
-            return False
-
-        clist.remove (minpath)
-
-        return minpath
-
 
     def calculate_kspf (self, root, dest, k) :
 
@@ -646,7 +690,10 @@ class Topology () :
 
         klist = []
         clist = []
-        self.calculate_spf_dst (root, dest)
+        if not widthfirst :
+            self.calculate_spf_dst (root, dest)
+        else :
+            self.calculate_spf_dst_wf (root, dest)
 
         shortest_path = self.extract_spf_route (root, dest)
         if not shortest_path :
@@ -668,18 +715,19 @@ class Topology () :
                 # create_deviation_path set up kipath.deviation_vertex and
                 # kipath.deviation_links
                 kipath = self.create_deviation_path (i, kpath)
+
                 #if kipath :
                     #print "kipath", kipath
 
                 if (kipath
                     and not check_same_kpath (clist, kipath)
                     and not check_same_kpath (klist, kipath)):
-                    clist.append (kipath)
+                    heapq.heappush (clist, (len (kipath.path), kipath))
 
                 if not kpath.next_deviation_vertex () :
                     break
 
-            kpath = self.find_min_kpath (clist)
+            _, kpath = heapq.heappop (clist)
             if not kpath :
                 break
 
@@ -690,16 +738,6 @@ class Topology () :
         #print >> sys.stderr, '\n'.join (map (lambda x: str (x), klist))
         return klist
 
-    def cleanup_for_kspf (self) :
-        for link in self.list_link () :
-            link.deviation_link = False
-        self.cleanup_for_kspf_node_only ()
-        return
-
-    def cleanup_for_kspf_node_only (self) :
-        for node in self.list_node () :
-            node.deviation_node = False
-        return
 
     def check_ecmped_vertex (self, vertex) :
         if len (vertex.spf_incoming) > 1 :
@@ -975,6 +1013,8 @@ def main (links, clients, options) :
 
     topo = Topology ()
     topo.read_links (links)
+    topo.fill_links ()
+    topo.mark_nodes (clients)
 
     topo.enable_iplb ()
 
@@ -1013,15 +1053,15 @@ def main (links, clients, options) :
 
     # calculate iplb routing table
     for [src, dst] in combination :
+        switch = dst.switch_of_this_client ()
+
         print "comment: calculate k-shortestpath %d->%d" % (src.id, dst.id)
+        print "comment: dst switch is %d" % switch.id
 
         if options.k_shortestpath :
-            kspfs = topo.calculate_kspf (src, dst, options.k_shortestpath)
+            kspfs = topo.calculate_kspf (src, switch, options.k_shortestpath)
             ktopo = create_dag_topo_from_kspfs (kspfs)
             dump_kspf_topo_iplb (ktopo, src.id)
-
-            topo.cleanup_for_kspf ()
-
 
     """
     if options.tcp :
@@ -1073,14 +1113,20 @@ if __name__ == '__main__' :
         '-s', '--seed', type = 'int', default = 0, dest = 'bench_seed'
         )
 
+    parser.add_option (
+        '-w', '--width-first', action = 'store_true', default = False,
+        dest = 'widthfirst'
+        )
 
     (options, args) = parser.parse_args ()
 
 
+    if options.widthfirst :
+        widthfirst = True
+
 
     print "comment: generating random graph"
     (links, clients) = generate_random_graph3 (options.random_graph_size)
-
 
     if options.bench_seed :
         BENCH_SEED = options.bench_seed
