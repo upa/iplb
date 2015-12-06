@@ -72,8 +72,8 @@ def generate_random_graph3 (portnum = 4) :
         del (clinks[c])
 
         # add new link to jellyfish
-        jellyfish[s].append (c)
-        jellyfish[c].append (s)
+        #jellyfish[s].append (c)
+        #jellyfish[c].append (s)
 
     # connect two port poped randomly
     while slinks :
@@ -183,6 +183,7 @@ class Node () :
 
         self.links = {} # neighbor_id : Link, neighbor_id : Link,
         self.link_list = [] # [Link, Link, Link]
+        self.neighbors = [] # [Node, Node, Node]
 
         # is node or switch
         self.isnode = False
@@ -218,6 +219,12 @@ class Node () :
 
     def list_link (self) :
         return self.link_list
+
+    def fill_neighbors (self) :
+        for link in self.link_list :
+            nei = link.getneighbor (self.id)
+            self.neighbors.append (nei)
+        return
 
     def neighbor_link (self, id) :
         if not self.links.has_key (id) :
@@ -385,6 +392,12 @@ class Topology () :
             link.node1 = self.find_node (link.id1)
             link.node2 = self.find_node (link.id2)
 
+        return
+
+    def fill_neighbors (self) :
+
+        for node in self.list_node () :
+            node.fill_neighbors ()
         return
 
     def mark_nodes (self, clients) :
@@ -578,8 +591,7 @@ class Topology () :
             if v.id == dst.id :
                 return
 
-            for link in v.list_link () :
-                nextv = link.getneighbor (v.id)
+            for nextv in v.neighbors :
 
                 if nextv.isnode or nextv.deviation_node :
                     continue
@@ -635,7 +647,8 @@ class Topology () :
             #print "try link %d" % src.id, link
             is_deviated = False
 
-            if link.getneighbor (src.id) in kpath.path :
+            next = link.getneighbor (src.id)
+            if next in kpath.path :
             #if self.find_node (link.neighbor_id (src.id)) in kpath.path :
                 #print "    in kpath"
                 is_deviated = True
@@ -647,7 +660,6 @@ class Topology () :
             if is_deviated :
                 continue
 
-            next = link.getneighbor (src.id)
             #next = self.find_node (link.neighbor_id (src.id))
 
             if not widthfirst :
@@ -1025,6 +1037,7 @@ def main (links, clients, switches, options) :
     topo = Topology ()
     topo.read_links (links)
     topo.fill_links ()
+    topo.fill_neighbors ()
     topo.mark_nodes (clients)
     topo.count_swlinks ()
 
