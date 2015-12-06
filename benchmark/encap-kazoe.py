@@ -6,6 +6,7 @@ import time
 import heapq
 import random
 import operator
+from collections import deque
 from optparse import OptionParser
 from argparse import ArgumentParser
 
@@ -135,7 +136,7 @@ class Link () :
     def getneighbor (self, id) :
         if self.id1 == id :
             return self.node2
-        elif self.id2 == id :
+        else :
             return self.node1
         return None
 
@@ -185,7 +186,7 @@ class Node () :
         self.isnode = False
 
         # SPF calculation related
-        self.spf_distance = -1
+        self.spf_cost = 1
         self.spf_state = SPF_STATE_NOVISIT
         self.spf_nexthop = set ()
         self.spf_incoming = set ()
@@ -304,6 +305,7 @@ class KspfPath () :
 class Topology () :
     def __init__ (self) :
         self.nodes = {} # id: Node()
+        self.node_list = [] # [Node, Node, Node]
         self.links = {} # id1: id2: Link()
         self.ecmp = False
         self.iplb = False
@@ -323,6 +325,7 @@ class Topology () :
             sys.exit (1)
             return
         self.nodes[node.id] = node
+        self.node_list.append (node)
         return
 
     def add_link (self, link) :
@@ -349,10 +352,7 @@ class Topology () :
         return None
 
     def list_node (self) :
-        li = []
-        for id in self.nodes.keys () :
-            li.append (self.nodes[id])
-        return li
+        return self.node_list
 
     def list_link (self) :
         li = []
@@ -436,15 +436,19 @@ class Topology () :
 
     def cleanup_for_spf (self) :
         for node in self.list_node () :
-            node.spf_cost = 1
-            node.spf_state = SPF_STATE_NOVISIT
-            node.spf_incoming.clear ()
-            node.spf_nexthop.clear ()
-            while node.spf_stacks :
-                l = node.spf_stacks.pop ()
-                del (l)
+            if node.spf_cost != 1 or node.spf_state != SPF_STATE_NOVISIT :
+                node.spf_cost = 1
+                node.spf_state = SPF_STATE_NOVISIT
+                #node.spf_incoming.clear ()
+                #node.spf_nexthop.clear ()
+                node.spf_incoming = set ()
+                node.spf_nexthop = set ()
+                node.spf_stacks = []
+                #while node.spf_stacks :
+                #    l = node.spf_stacks.pop ()
+                #    del (l)
 
-            node.iplb_checked = False
+                node.iplb_checked = False
 
         return
 
@@ -481,8 +485,9 @@ class Topology () :
                 # new shorter route to candidate vertex is found.
                 # update cost and incoming info.
                 nei.spf_cost = v.spf_cost + 1
-                nei.spf_incoming.clear ()
-                nei.spf_incoming.add (v)
+                nei.spf_incoming = set (v)
+                #nei.spf_incoming.clear ()
+                #nei.spf_incoming.add (v)
 
             elif (nei.spf_state == SPF_STATE_CANDIDATE and
                   not v in nei.spf_incoming and
@@ -552,29 +557,6 @@ class Topology () :
             if next.id == dst.id :
                 # destination is decided!!
                 return
-
-            if not self.ecmp :
-                # if ecmp disabled, one incoming having smallest id is selected
-                incoming = None
-                for v in next.spf_incoming :
-                    if not incoming :
-                        incoming = v
-                    else :
-                        if incoming.id > v.id :
-                            incoming = v
-
-                if incoming == root :
-                    next.spf_nexthop.add (next)
-                elif incoming :
-                    next.spf_nexthop |= incoming.spf_nexthop
-            else :
-                # if ecmp enabled, all nexthops of incomings are added
-                for v in next.spf_incoming :
-                    if v == root :
-                        next.spf_nexthop.add (next)
-                    else :
-                        next.spf_nexthop |= v.spf_nexthop
-
             # add new candidates
             self.calculate_spf_candidate_add (next, candidate)
 
@@ -584,13 +566,13 @@ class Topology () :
 
         self.cleanup_for_spf ()
 
-        stack = []
+        stack = deque ()
         root.spf_state = SPF_STATE_VISITED
         stack.append (root)
 
         while len (stack) > 0 :
 
-            v = stack.pop (0)
+            v = stack.popleft ()
 
             if v.id == dst.id :
                 return
@@ -600,7 +582,8 @@ class Topology () :
 
                 if nextv.spf_state == SPF_STATE_NOVISIT :
                     nextv.spf_state = SPF_STATE_VISITED
-                    nextv.spf_incoming.add (v)
+                    nextv.spf_incoming = [v]
+                    #nextv.spf_incoming.add (v)
                     stack.append (nextv)
 
         return
@@ -1073,6 +1056,7 @@ def main (links, clients, options) :
     """
 
     # calculate iplb routing table
+    etimes = []
     for [src, dst] in combination :
         switch = dst.switch_of_this_client ()
 
@@ -1084,8 +1068,11 @@ def main (links, clients, options) :
             kspfs = topo.calculate_kspf (src, switch, options.k_shortestpath)
             ktopo = create_dag_topo_from_kspfs (kspfs)
             etime = time.time ()
+
             print "comment: elapsed time = %s" % (str (etime - stime))
+            etimes.append (etime - stime)
             dump_kspf_topo_iplb (ktopo, src.id)
+
 
     """
     if options.tcp :
@@ -1094,6 +1081,13 @@ def main (links, clients, options) :
     else :
         topo.bench_random_combination_print (combination, options.flowdist)
     """
+
+    esum = 0.0
+    for e in etimes :
+        esum += e
+        
+    print "elapsed time avarage is %s. %d count." % \
+        (str (esum / float (len (etimes))), len (etimes))
 
     return
 
