@@ -75,7 +75,6 @@ def generate_random_graph3 (portnum = 4) :
         jellyfish[s].append (c)
         jellyfish[c].append (s)
 
-
     # connect two port poped randomly
     while slinks :
 
@@ -581,6 +580,9 @@ class Topology () :
 
             for link in v.list_link () :
                 nextv = link.getneighbor (v.id)
+
+                if nextv.isnode or nextv.deviation_node :
+                    continue
 
                 if nextv.spf_state == SPF_STATE_NOVISIT :
                     nextv.spf_state = SPF_STATE_VISITED
