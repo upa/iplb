@@ -57,3 +57,6 @@ core
 
 *.sh
 *.conf
+
+
+*/output
