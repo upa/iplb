@@ -103,7 +103,8 @@ def generate_random_graph3 (portnum = 4) :
         jellyfish[id2].append (id1)
 
     return [jellyfish,
-            map (lambda x: x + switchnum, range (1, clientnum + 1))]
+            map (lambda x: x + switchnum, range (1, clientnum + 1)),
+            range (1, switchnum + 1)]
 
 # 16 server, 16 switch.
 jellyfish = 0
@@ -228,8 +229,7 @@ class Node () :
     def switch_of_this_client (self) :
         # return switch that this connected :
         if not self.isnode :
-            print "This node %s is not client" % self
-            return
+            return self
         
         link = self.links[self.links.keys ()[0]]
         return link.getneighbor (self.id)
@@ -1018,7 +1018,7 @@ def dump_kspf_topo_iplb (topo, root) :
     return
 
 
-def main (links, clients, options) :
+def main (links, clients, switches, options) :
 
     topo = Topology ()
     topo.read_links (links)
@@ -1035,7 +1035,7 @@ def main (links, clients, options) :
     """
 
     print "comment: generating src->dst combination"
-    combination = topo.bench_random_combination_opt (clients)
+    combination = topo.bench_random_combination_opt (switches)
 
     """
     for root in topo.list_node () :
@@ -1156,11 +1156,12 @@ if __name__ == '__main__' :
     if options.widthfirst :
         widthfirst = True
 
+    graph_size = options.random_graph_size
 
     print "comment: generating random graph"
-    (links, clients) = generate_random_graph3 (options.random_graph_size)
+    (links, clients, switches) = generate_random_graph3 (graph_size)
 
     if options.bench_seed :
         BENCH_SEED = options.bench_seed
 
-    main (links, clients, options)
+    main (links, clients, switches, options)
