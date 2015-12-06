@@ -22,107 +22,6 @@ SPF_STATE_VISITED = 2
 RANDOM_SEED = 11
 BENCH_SEED = None
 
-square = {
-    1 : [ 2, 3, 5 , 6 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3, 7, 8 ],
-    5 : [ 1 ], 6 : [ 1 ], 7 : [ 4 ], 8 : [ 4 ],
-    }
-square_client = [ 5, 6, 7, 8 ]
-
-
-squaretwo = {
-    1 : [ 2, 3, 8 ], 2 : [ 1, 4 ], 3 : [ 1, 4 ], 4 : [ 2, 3, 5, 6 ],
-    5 : [ 4, 7 ], 6 : [ 4, 7 ], 7 : [ 5, 6, 9 ],
-    8 : [ 1 ], 9 : [ 7 ],
-    }
-squaretwo_client = [ 8, 9 ]
-
-kpath = {
-    1 : [ 2, 3 ], 2 : [ 1, 5 ], 3: [ 1, 4 ], 4 :[ 3, 5 ], 5 : [ 2, 4 ],
-}
-kpath_client = [1, 5]
-
-
-# 3-level 4-ary fat-tree topo
-# 20 switches and 16 servers
-fattree = {
-    1 : [ 5, 7, 9, 11], 2 : [ 5, 7, 9, 11 ],
-    3 : [ 6, 8, 10, 12 ], 4 : [ 6, 8, 10, 12 ],
-    5 : [ 1, 2, 13, 14 ], 6 : [ 3, 4, 13, 14 ],
-    7 : [ 1, 2, 15, 16 ], 8 : [ 3, 4, 15, 16],
-    9 : [ 1, 2, 17, 18], 10 : [ 3, 4, 17, 18 ],
-    11 : [ 1, 2, 19, 20 ], 12 : [ 3, 4, 19, 20],
-    13 : [ 5, 6, 21, 22 ], 14 : [ 5, 6, 23, 24 ],
-    15 : [ 7, 8, 25, 26 ], 16 : [ 7, 8, 27, 28 ],
-    17 : [ 9, 10, 29, 30 ], 18 : [ 9, 10, 31, 32 ],
-    19 : [ 11, 12, 33, 34 ], 20 : [ 11, 12, 35, 36 ],
-
-    21 : [ 13 ], 22 : [ 13 ], 23 : [ 14 ], 24 : [ 14 ],
-    25 : [ 15 ], 26 : [ 15 ], 27 : [ 16 ], 28 : [ 16 ],
-    29 : [ 17 ], 30 : [ 17 ], 31 : [ 18 ], 32 : [ 18 ],
-    33 : [ 19 ], 34 : [ 19 ], 35 : [ 20 ], 36 : [ 20 ],
-    }
-fattree_client = range (21, 36 + 1)
-
-
-# n = 4, k = 1 BCube
-# 8 switches and 16 servers
-bcube = {
-    1  : [  9, 13, 17, 21 ], 2  : [ 10, 14, 18, 22 ],
-    3  : [ 11, 15, 19, 23 ], 4  : [ 12, 16, 20, 24 ],
-    5  : [  9, 10, 11, 12 ], 6  : [ 13, 14, 15, 16 ],
-    7  : [ 17, 18, 19, 20 ], 8  : [ 21, 22, 23, 24 ],
-
-    9  : [  1, 5, 25 ], 10 : [  2, 5, 26 ], 11 : [  3, 5, 27 ],
-    12 : [  4, 5, 28 ], 13 : [  1, 6, 29 ], 14 : [  2, 6, 30 ],
-    15 : [  3, 6, 31 ], 16 : [  4, 6, 32 ], 17 : [  1, 7, 33 ],
-    18 : [  2, 7, 34 ], 19 : [  3, 7, 35 ], 20 : [  4, 7, 36 ],
-    21 : [  1, 8, 37 ], 22 : [  2, 8, 38 ], 23 : [  3, 8, 39 ],
-    24 : [  4, 8, 40 ],
-
-    25 : [  9 ], 26 : [ 10 ], 27 : [ 11 ], 28 : [ 12 ],
-    29 : [ 13 ], 30 : [ 14 ], 31 : [ 15 ], 32 : [ 16 ],
-    33 : [ 17 ], 34 : [ 18 ], 35 : [ 19 ], 36 : [ 20 ],
-    37 : [ 21 ], 38 : [ 22 ], 39 : [ 23 ], 40 : [ 24 ],
-    }
-bcube_client = range (25, 40 + 1)
-
-
-# 2 dimension, 4 terminal per switch, 4 switch per dimension
-# 8 switches and 32 servers
-hyperx = {
-    1 : [ 2, 3, 4, 5, 9, 10, 11, 12 ], 2 : [ 1, 3, 4, 6, 13, 14, 15, 16 ],
-    3 : [ 1, 2, 4, 7, 17, 18, 19, 20 ], 4 : [ 1, 2, 3, 8, 21, 22, 23, 24 ],
-    5 : [ 6, 7, 8, 1, 25, 26, 27, 28 ], 6 : [ 5, 7, 8, 2, 29, 30, 31, 32 ],
-    7 : [ 5, 6, 8, 3, 33, 34, 35, 36 ], 8 : [ 5, 6, 7, 4, 37, 38, 39, 40 ],
-
-    9 : [1], 10 : [1], 11 : [1], 12 : [1],
-    13 : [2], 14 : [2], 15 : [2], 16 : [2],
-    17 : [3], 18 : [3], 19 : [3], 20 : [3],
-    21 : [4], 22 : [4], 23 : [4], 24 : [4],
-
-    25 : [5], 26 : [5], 27 : [5], 28 : [5],
-    29 : [6], 30 : [6], 31 : [6], 32 : [6],
-    33 : [7], 34 : [7], 35 : [7], 36 : [7],
-    37 : [8], 38 : [8], 39 : [8], 40 : [8],
-    }
-hyperx_client = range (9, 40 + 1)
-
-# 4-port clos topology
-#
-clos = {
-    1 : [ 3, 4, 7, 8 ], 2: [ 3, 4, 7, 8 ],
-    
-    3 : [ 1, 2, 5, 6 ], 4: [ 1, 2, 5, 6 ],
-    5 : [ 3, 4, 11, 12 ], 6 : [ 3, 4, 13, 14],
-
-    7 : [ 1, 2, 9, 10 ], 8 : [ 1, 2, 9, 10 ],
-    9 : [ 7, 8, 15 ,16 ], 10 : [ 7, 8, 17, 18 ],
-
-    11 : [ 5 ], 12 : [ 5 ], 13 : [ 6 ], 14 : [ 6 ],
-    15 : [ 9 ], 16 : [ 9 ], 17 : [ 10 ], 18 : [ 10 ],
-    }
-clos_client = range (11, 18 + 1)
-
 
 def generate_random_graph3 (portnum = 4) :
 
@@ -247,9 +146,19 @@ class Node () :
         self.id = id
         if isinstance (id, str) :
             [depth, node_id] = map (lambda x: int (x), id.split (' '))
-            self.loaddr = "%s%d" % (loprefix, node_id)
         else :
-            self.loaddr = "%s%d" % (loprefix, id)
+            node_id = self.id
+
+        o3 = 0
+        o4 = 0
+        if 256 > node_id :
+            o4 = node_id
+        elif 256 * 256 > node_id :
+            o4 = node_id % 256
+            o3 = (node_id - o4) / 256
+
+        self.loaddr = "10.0.%d.%d" % (o3, o4)
+
         self.links = {} # neighbor_id : Link, neighbor_id : Link,
 
         # SPF calculation related
@@ -587,6 +496,51 @@ class Topology () :
 
         return
 
+    def calculate_spf_dst (self, root, dst) :
+
+        self.cleanup_for_spf ()
+
+        candidate = []
+        candidate.append (root)
+
+        while len (candidate) > 0 :
+
+            # select shortest next vertex
+            next = self.calculate_spf_candidate_decide (candidate)
+
+            # process decided next vertex
+            next.spf_state = SPF_STATE_VISITED
+            candidate.remove (next)
+            if next.id == dst.id :
+                # destination is decided!!
+                return
+
+            if not self.ecmp :
+                # if ecmp disabled, one incoming having smallest id is selected
+                incoming = None
+                for v in next.spf_incoming :
+                    if not incoming :
+                        incoming = v
+                    else :
+                        if incoming.id > v.id :
+                            incoming = v
+                if incoming == root :
+                    next.spf_nexthop.add (next)
+                elif incoming :
+                    next.spf_nexthop |= incoming.spf_nexthop
+            else :
+                # if ecmp enabled, all nexthops of incomings are added
+                for v in next.spf_incoming :
+                    if v == root :
+                        next.spf_nexthop.add (next)
+                    else :
+                        next.spf_nexthop |= v.spf_nexthop
+
+            # add new candidates
+            self.calculate_spf_candidate_add (next, candidate)
+
+        return
+
     def extract_spf_route (self, root, dest) :
 
         v = dest
@@ -642,7 +596,7 @@ class Topology () :
 
             next = self.find_node (link.neighbor_id (src.id))
 
-            self.calculate_spf (next)
+            self.calculate_spf_dst (next, dst)
             pathid = self.extract_spf_route (next, dst)
 
             if not pathid :
@@ -696,7 +650,7 @@ class Topology () :
 
         klist = []
         clist = []
-        self.calculate_spf (root)
+        self.calculate_spf_dst (root, dest)
 
         shortest_path = self.extract_spf_route (root, dest)
         if not shortest_path :
@@ -866,7 +820,7 @@ class Topology () :
     def bench_random (self, client, flowdist, tool = "FLOWGEN") :
 
         candidate = copy.deepcopy (client)
-        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+        combinations = [] # [[src, dst], [src, dst], [src, dst]]
 
         random.seed (BENCH_SEED)
 
@@ -880,16 +834,16 @@ class Topology () :
             candidate.remove (src)
             dst = random.choice (candidate)
             candidate.remove (dst)
-            conbinations.append ([self.find_node (src), self.find_node (dst)])
+            combinations.append ([self.find_node (src), self.find_node (dst)])
 
-        for [src, dst] in conbinations :
+        for [src, dst] in combinations :
             print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
                                             dst.id, dst.loaddr)
 
-    def bench_random_conbination (self, client) :
+    def bench_random_combination (self, client) :
 
         candidate = copy.deepcopy (client)
-        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+        combinations = [] # [[src, dst], [src, dst], [src, dst]]
 
         random.seed (BENCH_SEED)
 
@@ -903,15 +857,15 @@ class Topology () :
             candidate.remove (src)
             dst = random.choice (candidate)
             candidate.remove (dst)
-            conbinations.append ([self.find_node (src), self.find_node (dst)])
+            combinations.append ([self.find_node (src), self.find_node (dst)])
 
-        return conbinations
+        return combinations
 
-    def bench_random_conbination_all (self, client) :
+    def bench_random_combination_all (self, client) :
 
         send = copy.deepcopy (client)
         recv = copy.deepcopy (client)
-        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+        combinations = [] # [[src, dst], [src, dst], [src, dst]]
 
         random.seed (BENCH_SEED)
 
@@ -925,14 +879,14 @@ class Topology () :
 
             send.remove (src)
             recv.remove (dst)
-            conbinations.append ([self.find_node (src), self.find_node (dst)])
+            combinations.append ([self.find_node (src), self.find_node (dst)])
 
-        return conbinations
+        return combinations
 
-    def bench_random_conbination_print (self, conbinations, flowdist,
+    def bench_random_combination_print (self, combinations, flowdist,
                                         tool = "FLOWGEN") :
 
-        for [src, dst] in conbinations :
+        for [src, dst] in combinations :
             print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
                                             dst.id, dst.loaddr)
 
@@ -941,7 +895,7 @@ class Topology () :
 
         send_candidate = copy.deepcopy (client)
         recv_candidate = copy.deepcopy (client)
-        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+        combinations = [] # [[src, dst], [src, dst], [src, dst]]
 
         random.seed (BENCH_SEED)
 
@@ -953,9 +907,9 @@ class Topology () :
             send_candidate.remove (src)
             recv_candidate.remove (dst)
 
-            conbinations.append ([self.find_node (src), self.find_node (dst)])
+            combinations.append ([self.find_node (src), self.find_node (dst)])
 
-        for [src, dst] in conbinations :
+        for [src, dst] in combinations :
             print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
                                             dst.id, dst.loaddr)
 
@@ -1017,6 +971,7 @@ def dump_kspf_topo_iplb (topo, root) :
 
     stack = []
     dpfsearch (rootnode, stack, root, False)
+    sys.stdout.flush()
     return
 
 
@@ -1034,7 +989,7 @@ def main (links, clients, options) :
     """
 
     print "comment: generating src->dst combination"
-    conbination = topo.bench_random_conbination_all (clients)
+    combination = topo.bench_random_combination_all (clients)
 
     """
     for root in topo.list_node () :
@@ -1061,7 +1016,7 @@ def main (links, clients, options) :
     """
 
     # calculate iplb routing table
-    for [src, dst] in conbination :
+    for [src, dst] in combination :
         print "comment: calculate k-shortestpath %d->%d" % (src.id, dst.id)
 
         if options.k_shortestpath :
@@ -1074,10 +1029,10 @@ def main (links, clients, options) :
 
     """
     if options.tcp :
-        topo.bench_random_conbination_print (conbination, options.flowdist,
+        topo.bench_random_combination_print (combination, options.flowdist,
                                              "TCPGEN")
     else :
-        topo.bench_random_conbination_print (conbination, options.flowdist)
+        topo.bench_random_combination_print (combination, options.flowdist)
     """
 
     return
