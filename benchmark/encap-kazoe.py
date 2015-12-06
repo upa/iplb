@@ -281,7 +281,7 @@ class KspfPath () :
         return None
 
     def extract_route (self, i) :
-        # extract rute from src to i
+        # extract route from src to i
         route = []
         for v in self.path :
             route.append (v)
@@ -369,9 +369,11 @@ class Topology () :
 
     def fill_links (self) :
         # fill link->node1/2
+        linkcount = 0
         for link in self.list_link () :
             link.node1 = self.find_node (link.id1)
             link.node2 = self.find_node (link.id2)
+
         return
 
     def mark_nodes (self, clients) :
@@ -380,6 +382,13 @@ class Topology () :
                 node.isnode = True
         return
 
+    def count_swlinks (self) :
+        c = 0
+        for link in self.list_link () :
+            if not link.node1.isnode and link.node2.isnode :
+                c += 1
+        print "comment: switch link is %d" % c
+        return
 
     def dump (self) :
 
@@ -568,22 +577,24 @@ class Topology () :
 
         self.cleanup_for_spf ()
 
-        stack = set ()
-        stack.add (root)
+        stack = []
+        root.spf_state = SPF_STATE_VISITED
+        stack.append (root)
 
         while len (stack) > 0 :
 
-            v = stack.pop ()
-            v.spf_state = SPF_STATE_VISITED
+            v = stack.pop (0)
 
             if v.id == dst.id :
                 return
 
             for link in v.list_link () :
                 nextv = link.getnode (link.neighbor_id (v.id))
+
                 if nextv.spf_state == SPF_STATE_NOVISIT :
+                    nextv.spf_state = SPF_STATE_VISITED
                     nextv.spf_incoming.add (v)
-                    stack.add (nextv)
+                    stack.append (nextv)
 
         return
 
@@ -1017,6 +1028,7 @@ def main (links, clients, options) :
     topo.read_links (links)
     topo.fill_links ()
     topo.mark_nodes (clients)
+    topo.count_swlinks ()
 
     topo.enable_iplb ()
 
@@ -1061,8 +1073,11 @@ def main (links, clients, options) :
         print "comment: dst switch is %d" % switch.id
 
         if options.k_shortestpath :
+            stime = time.time ()
             kspfs = topo.calculate_kspf (src, switch, options.k_shortestpath)
             ktopo = create_dag_topo_from_kspfs (kspfs)
+            etime = time.time ()
+            print "comment: elapsed time = %s" % (str (etime - stime))
             dump_kspf_topo_iplb (ktopo, src.id)
 
     """
