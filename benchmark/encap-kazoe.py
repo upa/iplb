@@ -861,7 +861,7 @@ class Topology () :
 
         return combinations
 
-    def bench_random_combination_all (self, client) :
+    def bench_random_combination_100 (self, client) :
 
         send = copy.deepcopy (client)
         recv = copy.deepcopy (client)
@@ -881,7 +881,7 @@ class Topology () :
             recv.remove (dst)
             combinations.append ([self.find_node (src), self.find_node (dst)])
 
-        return combinations
+        return combinations[0:100]
 
     def bench_random_combination_print (self, combinations, flowdist,
                                         tool = "FLOWGEN") :
@@ -989,7 +989,7 @@ def main (links, clients, options) :
     """
 
     print "comment: generating src->dst combination"
-    combination = topo.bench_random_combination_all (clients)
+    combination = topo.bench_random_combination_100 (clients)
 
     """
     for root in topo.list_node () :

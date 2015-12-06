@@ -1,0 +1,158 @@
+comment: generating random graph
+comment: generating src->dst combination
+comment: calculate k-shortestpath 950->442
+IPLB 950 to 1.0.0.442/32 relays 1.0.0.44 1.0.0.45 1.0.0.243
+IPLB 950 to 1.0.0.442/32 relays 1.0.0.44 1.0.0.45 1.0.0.2
+IPLB 950 to 1.0.0.442/32 relays 1.0.0.44 1.0.0.97
+IPLB 950 to 1.0.0.442/32 relays 1.0.0.6 1.0.0.284 1.0.0.128
+IPLB 950 to 1.0.0.442/32 relays 1.0.0.6 1.0.0.284 1.0.0.61
+IPLB 950 to 1.0.0.442/32 relays 1.0.0.6 1.0.0.32
+IPLB 950 to 1.0.0.442/32 relays 1.0.0.33 1.0.0.316
+IPLB 950 to 1.0.0.442/32 relays 1.0.0.33 1.0.0.31
+comment: calculate k-shortestpath 1344->750
+IPLB 1344 to 1.0.0.750/32 relays 1.0.0.256 1.0.0.78
+IPLB 1344 to 1.0.0.750/32 relays 1.0.0.256 1.0.0.2
+IPLB 1344 to 1.0.0.750/32 relays 1.0.0.8 1.0.0.112 1.0.0.19
+IPLB 1344 to 1.0.0.750/32 relays 1.0.0.8 1.0.0.112 1.0.0.16
+IPLB 1344 to 1.0.0.750/32 relays 1.0.0.8 1.0.0.11
+IPLB 1344 to 1.0.0.750/32 relays 1.0.0.51 1.0.0.128
+IPLB 1344 to 1.0.0.750/32 relays 1.0.0.51 1.0.0.30
+IPLB 1344 to 1.0.0.750/32 relays 1.0.0.51 1.0.0.72
+comment: calculate k-shortestpath 487->574
+IPLB 487 to 1.0.0.574/32 relays 1.0.0.171 1.0.0.66
+IPLB 487 to 1.0.0.574/32 relays 1.0.0.171 1.0.0.42
+IPLB 487 to 1.0.0.574/32 relays 1.0.0.9 1.0.0.208
+IPLB 487 to 1.0.0.574/32 relays 1.0.0.9 1.0.0.34
+IPLB 487 to 1.0.0.574/32 relays 1.0.0.9 1.0.0.73
+IPLB 487 to 1.0.0.574/32 relays 1.0.0.17 1.0.0.53 1.0.0.66
+IPLB 487 to 1.0.0.574/32 relays 1.0.0.17 1.0.0.53 1.0.0.11
+IPLB 487 to 1.0.0.574/32 relays 1.0.0.17 1.0.0.10
+comment: calculate k-shortestpath 932->1017
+IPLB 932 to 1.0.0.1017/32 relays 1.0.0.123 1.0.0.20
+IPLB 932 to 1.0.0.1017/32 relays 1.0.0.123 1.0.0.24
+IPLB 932 to 1.0.0.1017/32 relays 1.0.0.15 1.0.0.134 1.0.0.60
+IPLB 932 to 1.0.0.1017/32 relays 1.0.0.15 1.0.0.134 1.0.0.6
+IPLB 932 to 1.0.0.1017/32 relays 1.0.0.15 1.0.0.65
+IPLB 932 to 1.0.0.1017/32 relays 1.0.0.15 1.0.0.126
+IPLB 932 to 1.0.0.1017/32 relays 1.0.0.62 1.0.0.74
+IPLB 932 to 1.0.0.1017/32 relays 1.0.0.62 1.0.0.12
+comment: calculate k-shortestpath 1326->524
+IPLB 1326 to 1.0.0.524/32 relays 1.0.0.266 1.0.0.60
+IPLB 1326 to 1.0.0.524/32 relays 1.0.0.266 1.0.0.89
+IPLB 1326 to 1.0.0.524/32 relays 1.0.0.266 1.0.0.122
+IPLB 1326 to 1.0.0.524/32 relays 1.0.0.50 1.0.0.116 1.0.0.60
+IPLB 1326 to 1.0.0.524/32 relays 1.0.0.50 1.0.0.116 1.0.0.5
+IPLB 1326 to 1.0.0.524/32 relays 1.0.0.50 1.0.0.80
+IPLB 1326 to 1.0.0.524/32 relays 1.0.0.52 1.0.0.134
+IPLB 1326 to 1.0.0.524/32 relays 1.0.0.52 1.0.0.8
+comment: calculate k-shortestpath 791->1125
+IPLB 791 to 1.0.0.1125/32 relays 1.0.0.204 1.0.0.114
+IPLB 791 to 1.0.0.1125/32 relays 1.0.0.204 1.0.0.27 1.0.0.170
+IPLB 791 to 1.0.0.1125/32 relays 1.0.0.204 1.0.0.27 1.0.0.34
+IPLB 791 to 1.0.0.1125/32 relays 1.0.0.204 1.0.0.51
+IPLB 791 to 1.0.0.1125/32 relays 1.0.0.25 1.0.0.208
+IPLB 791 to 1.0.0.1125/32 relays 1.0.0.25 1.0.0.66
+IPLB 791 to 1.0.0.1125/32 relays 1.0.0.88 1.0.0.217
+IPLB 791 to 1.0.0.1125/32 relays 1.0.0.88 1.0.0.6
+comment: calculate k-shortestpath 835->991
+IPLB 835 to 1.0.0.991/32 relays 1.0.0.211 1.0.0.51 1.0.0.271
+IPLB 835 to 1.0.0.991/32 relays 1.0.0.211 1.0.0.51 1.0.0.30
+IPLB 835 to 1.0.0.991/32 relays 1.0.0.211 1.0.0.13
+IPLB 835 to 1.0.0.991/32 relays 1.0.0.211 1.0.0.19
+IPLB 835 to 1.0.0.991/32 relays 1.0.0.14
+IPLB 835 to 1.0.0.991/32 relays 1.0.0.75 1.0.0.293
+IPLB 835 to 1.0.0.991/32 relays 1.0.0.75 1.0.0.3
+IPLB 835 to 1.0.0.991/32 relays 1.0.0.75 1.0.0.5
+comment: calculate k-shortestpath 819->382
+IPLB 819 to 1.0.0.382/32 relays 1.0.0.151 1.0.0.39
+IPLB 819 to 1.0.0.382/32 relays 1.0.0.151 1.0.0.5
+IPLB 819 to 1.0.0.382/32 relays 1.0.0.5 1.0.0.71
+IPLB 819 to 1.0.0.382/32 relays 1.0.0.5 1.0.0.75 1.0.0.3
+IPLB 819 to 1.0.0.382/32 relays 1.0.0.5 1.0.0.75 1.0.0.11
+IPLB 819 to 1.0.0.382/32 relays 1.0.0.23 1.0.0.154
+IPLB 819 to 1.0.0.382/32 relays 1.0.0.23 1.0.0.17
+IPLB 819 to 1.0.0.382/32 relays 1.0.0.23 1.0.0.18
+comment: calculate k-shortestpath 339->406
+IPLB 339 to 1.0.0.406/32 relays 1.0.0.74 1.0.0.62 1.0.0.12
+IPLB 339 to 1.0.0.406/32 relays 1.0.0.74 1.0.0.62 1.0.0.37
+IPLB 339 to 1.0.0.406/32 relays 1.0.0.74 1.0.0.3
+IPLB 339 to 1.0.0.406/32 relays 1.0.0.17 1.0.0.10 1.0.0.224
+IPLB 339 to 1.0.0.406/32 relays 1.0.0.17 1.0.0.10 1.0.0.36
+IPLB 339 to 1.0.0.406/32 relays 1.0.0.17 1.0.0.21
+IPLB 339 to 1.0.0.406/32 relays 1.0.0.24 1.0.0.123
+IPLB 339 to 1.0.0.406/32 relays 1.0.0.24 1.0.0.4
+comment: calculate k-shortestpath 970->953
+IPLB 970 to 1.0.0.953/32 relays 1.0.0.171 1.0.0.135
+IPLB 970 to 1.0.0.953/32 relays 1.0.0.171 1.0.0.42
+IPLB 970 to 1.0.0.953/32 relays 1.0.0.171 1.0.0.55
+IPLB 970 to 1.0.0.953/32 relays 1.0.0.21 1.0.0.130
+IPLB 970 to 1.0.0.953/32 relays 1.0.0.21 1.0.0.17
+IPLB 970 to 1.0.0.953/32 relays 1.0.0.21 1.0.0.22
+IPLB 970 to 1.0.0.953/32 relays 1.0.0.22 1.0.0.119
+IPLB 970 to 1.0.0.953/32 relays 1.0.0.22 1.0.0.1
+comment: calculate k-shortestpath 1216->847
+IPLB 1216 to 1.0.0.847/32 relays 1.0.0.174 1.0.0.87
+IPLB 1216 to 1.0.0.847/32 relays 1.0.0.174 1.0.0.54
+IPLB 1216 to 1.0.0.847/32 relays 1.0.0.174 1.0.0.65
+IPLB 1216 to 1.0.0.847/32 relays 1.0.0.15 1.0.0.268
+IPLB 1216 to 1.0.0.847/32 relays 1.0.0.15 1.0.0.65
+IPLB 1216 to 1.0.0.847/32 relays 1.0.0.15 1.0.0.126
+IPLB 1216 to 1.0.0.847/32 relays 1.0.0.54 1.0.0.112
+IPLB 1216 to 1.0.0.847/32 relays 1.0.0.54 1.0.0.123
+comment: calculate k-shortestpath 426->842
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.123 1.0.0.137
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.123 1.0.0.20 1.0.0.158
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.123 1.0.0.20 1.0.0.123
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.123 1.0.0.24
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.32 1.0.0.56
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.32 1.0.0.6
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.43 1.0.0.181
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.43 1.0.0.20 1.0.0.158
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.43 1.0.0.20 1.0.0.123
+IPLB 426 to 1.0.0.842/32 relays 1.0.0.43 1.0.0.28
+comment: calculate k-shortestpath 1027->1328
+IPLB 1027 to 1.0.0.1328/32 relays 1.0.0.124 1.0.0.159
+IPLB 1027 to 1.0.0.1328/32 relays 1.0.0.124 1.0.0.39
+IPLB 1027 to 1.0.0.1328/32 relays 1.0.0.21 1.0.0.22
+IPLB 1027 to 1.0.0.1328/32 relays 1.0.0.21 1.0.0.17
+IPLB 1027 to 1.0.0.1328/32 relays 1.0.0.27 1.0.0.204 1.0.0.102
+IPLB 1027 to 1.0.0.1328/32 relays 1.0.0.27 1.0.0.204 1.0.0.51
+IPLB 1027 to 1.0.0.1328/32 relays 1.0.0.27 1.0.0.34
+IPLB 1027 to 1.0.0.1328/32 relays 1.0.0.27 1.0.0.40
+comment: calculate k-shortestpath 356->619
+IPLB 356 to 1.0.0.619/32 relays 1.0.0.284 1.0.0.303
+IPLB 356 to 1.0.0.619/32 relays 1.0.0.284 1.0.0.6
+IPLB 356 to 1.0.0.619/32 relays 1.0.0.284 1.0.0.61
+IPLB 356 to 1.0.0.619/32 relays 1.0.0.13 1.0.0.294
+IPLB 356 to 1.0.0.619/32 relays 1.0.0.13 1.0.0.11
+IPLB 356 to 1.0.0.619/32 relays 1.0.0.35 1.0.0.142 1.0.0.62
+IPLB 356 to 1.0.0.619/32 relays 1.0.0.35 1.0.0.142 1.0.0.19
+IPLB 356 to 1.0.0.619/32 relays 1.0.0.35 1.0.0.57
+comment: calculate k-shortestpath 421->624
+IPLB 421 to 1.0.0.624/32 relays 1.0.0.49 1.0.0.14
+IPLB 421 to 1.0.0.624/32 relays 1.0.0.49 1.0.0.58
+IPLB 421 to 1.0.0.624/32 relays 1.0.0.49 1.0.0.100 1.0.0.279
+IPLB 421 to 1.0.0.624/32 relays 1.0.0.49 1.0.0.100 1.0.0.47
+IPLB 421 to 1.0.0.624/32 relays 1.0.0.47 1.0.0.134
+IPLB 421 to 1.0.0.624/32 relays 1.0.0.47 1.0.0.12 1.0.0.224
+IPLB 421 to 1.0.0.624/32 relays 1.0.0.47 1.0.0.12 1.0.0.62
+IPLB 421 to 1.0.0.624/32 relays 1.0.0.47 1.0.0.31
+comment: calculate k-shortestpath 499->1030
+IPLB 499 to 1.0.0.1030/32 relays 1.0.0.58 1.0.0.88 1.0.0.201
+IPLB 499 to 1.0.0.1030/32 relays 1.0.0.58 1.0.0.88 1.0.0.6
+IPLB 499 to 1.0.0.1030/32 relays 1.0.0.58 1.0.0.7
+IPLB 499 to 1.0.0.1030/32 relays 1.0.0.58 1.0.0.41
+IPLB 499 to 1.0.0.1030/32 relays 1.0.0.14 1.0.0.291 1.0.0.54
+IPLB 499 to 1.0.0.1030/32 relays 1.0.0.14 1.0.0.291 1.0.0.7
+IPLB 499 to 1.0.0.1030/32 relays 1.0.0.14 1.0.0.38
+IPLB 499 to 1.0.0.1030/32 relays 1.0.0.14 1.0.0.40
+comment: calculate k-shortestpath 890->1308
+IPLB 890 to 1.0.0.1308/32 relays 1.0.0.193 1.0.0.42
+IPLB 890 to 1.0.0.1308/32 relays 1.0.0.193 1.0.0.36
+IPLB 890 to 1.0.0.1308/32 relays 1.0.0.20 1.0.0.43
+IPLB 890 to 1.0.0.1308/32 relays 1.0.0.20 1.0.0.6
+IPLB 890 to 1.0.0.1308/32 relays 1.0.0.20 1.0.0.33
+IPLB 890 to 1.0.0.1308/32 relays 1.0.0.24 1.0.0.90
+IPLB 890 to 1.0.0.1308/32 relays 1.0.0.24 1.0.0.4
+IPLB 890 to 1.0.0.1308/32 relays 1.0.0.24 1.0.0.39
+comment: calcul
