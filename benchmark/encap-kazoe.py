@@ -202,23 +202,19 @@ def generate_random_graph () :
 
 def generate_random_graph2 () :
 
-    portnum = 4
-    clientnum = 16
-    switchnum = 20
-
     #portnum = 6
     #clientnum = 54
     #switchnum = 45
 
-    #portnum = 8
-    #clientnum = 128
-    #switchnum = 80
+    portnum = 8
+    clientnum = 128
+    switchnum = 80
     
     #portnum = 12
     #clientnum = 432
     #switchnum = 180
 
-    servernumperswitch = 3
+    servernumperswitch = 2
     jellyfish = {}
 
     random.seed (RANDOM_SEED)
@@ -238,14 +234,94 @@ def generate_random_graph2 () :
         clinks[x] = 1
 
     # connect client to switch links
+    n = 0
     while clinks :
-        s = random.choice (slinks.keys ())
+
         c = random.choice (clinks.keys ())
+        s = slinks.keys ()[n]
+        n = (n + 1) % len (slinks.keys ())
+
+        if portnum - slinks[s] > servernumperswitch :
+            continue
 
         # decrease existing port num
         slinks[s] -= 1
+
+        del (clinks[c])
+
+        # add new link to jellyfish
+        jellyfish[s].append (c)
+        jellyfish[c].append (s)
+
+
+    # connect two port poped randomly
+    while slinks :
+
+        id1 = random.choice (slinks.keys ())
+        id2 = random.choice (slinks.keys ())
+
+        if id1 == id2 or id2 in jellyfish[id1]:
+            # same link or existing link
+            if len (slinks.keys ()) < 3 :
+                break
+            else :
+                continue
+
+        # decrease existing port num
+        slinks[id1] -= 1
+        if slinks[id1] == 0 :
+            del (slinks[id1])
+
+        slinks[id2] -= 1
+        if slinks[id2] == 0 :
+            del (slinks[id2])
+
+        # add new link to jellyfish
+        jellyfish[id1].append (id2)
+        jellyfish[id2].append (id1)
+
+    return [jellyfish,
+            map (lambda x: x + switchnum, range (1, clientnum + 1))]
+
+def generate_random_graph3 (portnum = 4) :
+
+    k = portnum
+    k2 = portnum / 2
+    clientnum = k * k2 * k2
+    switchnum = k * (k2 + k2) + (k2 * k2)
+
+    servernumperswitch = k2
+    jellyfish = {}
+
+    random.seed (RANDOM_SEED)
+
+    for x in range (1, switchnum + clientnum + 1) :
+        jellyfish[x] = []
+
+    # generate switch links
+    clinks = {} # {nodeid : [ 0 ~ portnum-1 ]}
+    slinks = {} # {nodeid : [ 0 ~ portnum-1 ]}
+
+    for x in range (1, switchnum + 1) :
+        slinks[x] = portnum
+
+    # generate node links
+    for x in range (switchnum + 1, switchnum + clientnum + 1) :
+        clinks[x] = 1
+
+    # connect client to switch links
+    n = 0
+    while clinks :
+
+        c = random.choice (clinks.keys ())
+        s = slinks.keys ()[n]
+        n = (n + 1) % len (slinks.keys ())
+
         if portnum - slinks[s] > servernumperswitch :
             continue
+
+        # decrease existing port num
+        slinks[s] -= 1
 
         del (clinks[c])
 
@@ -284,7 +360,8 @@ def generate_random_graph2 () :
             map (lambda x: x + switchnum, range (1, clientnum + 1))]
 
 # 16 server, 16 switch.
-[jellyfish, jellyfish_client] = generate_random_graph2 ()
+jellyfish = 0
+jellyfish_client = 0
 
 
 
@@ -776,7 +853,6 @@ class Topology () :
             return False
 
 
-
         klist = []
         clist = []
         self.calculate_spf (root)
@@ -969,6 +1045,57 @@ class Topology () :
             print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
                                             dst.id, dst.loaddr)
 
+    def bench_random_conbination (self, client) :
+
+        candidate = copy.deepcopy (client)
+        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+
+        random.seed (BENCH_SEED)
+
+        if len (candidate) % 2 == 1 :
+            # odd number
+            rem = random.choice (candidate)
+            candidate.remove (rem)
+
+        while candidate :
+            src = random.choice (candidate)
+            candidate.remove (src)
+            dst = random.choice (candidate)
+            candidate.remove (dst)
+            conbinations.append ([self.find_node (src), self.find_node (dst)])
+
+        return conbinations
+
+    def bench_random_conbination_all (self, client) :
+
+        send = copy.deepcopy (client)
+        recv = copy.deepcopy (client)
+        conbinations = [] # [[src, dst], [src, dst], [src, dst]]
+
+        random.seed (BENCH_SEED)
+
+        while send :
+            src = random.choice (send)
+            dst = random.choice (recv)
+
+            if src == dst :
+		if len (send) > 1 : continue
+		else : break
+
+            send.remove (src)
+            recv.remove (dst)
+            conbinations.append ([self.find_node (src), self.find_node (dst)])
+
+        return conbinations
+
+    def bench_random_conbination_print (self, conbinations, flowdist,
+                                        tool = "FLOWGEN") :
+
+        for [src, dst] in conbinations :
+            print "%s %s %d %s -> %d %s" % (tool, flowdist, src.id, src.loaddr,
+                                            dst.id, dst.loaddr)
+
+
     def bench_all_random (self, client, flowdist, tool = "FLOWGEN") :
 
         send_candidate = copy.deepcopy (client)
@@ -1057,16 +1184,18 @@ def main (links, clients, options) :
     topo = Topology ()
     topo.read_links (links)
 
-    if options.ecmp :
-        topo.enable_ecmp ()
+    topo.enable_iplb ()
 
-    if options.iplb :
-        topo.enable_iplb ()
-
+    """
     topo.info_dump (clients)
     topo.node_dump ()
     topo.link_dump ()
+    """
 
+    print "comment: generating src->dst combination"
+    conbination = topo.bench_random_conbination_all (clients)
+
+    """
     for root in topo.list_node () :
 
         # calculate routing table.
@@ -1080,33 +1209,35 @@ def main (links, clients, options) :
             topo.spf_dump (root)
 
         # calculate iplb routing table
-        if options.iplb and root.id in clients :
+        if options.iplb and not options.k_shortestpath and root.id in clients :
             for client in clients :
                 if client == root.id :
                     continue
 
-                if options.k_shortestpath :
-                    kspfs = topo.calculate_kspf (root, topo.find_node (client),
-                                                 options.k_shortestpath)
+                topo.calculate_iplb_relay (client)
+                topo.iplb_dump (root, client)
+                topo.cleanup_for_iplb ()
+    """
 
-                    for k in kspfs :
-                        print k
+    # calculate iplb routing table
+    for [src, dst] in conbination :
+        print "comment: calculate k-shortestpath %d->%d" % (src.id, dst.id)
 
-                    ktopo = create_dag_topo_from_kspfs (kspfs)
-                    dump_kspf_topo_iplb (ktopo, root.id)
+        if options.k_shortestpath :
+            kspfs = topo.calculate_kspf (src, dst, options.k_shortestpath)
+            ktopo = create_dag_topo_from_kspfs (kspfs)
+            dump_kspf_topo_iplb (ktopo, src.id)
 
-                    topo.cleanup_for_kspf ()
-
-                else :
-                    topo.calculate_iplb_relay (client)
-                    topo.iplb_dump (root, client)
-                    topo.cleanup_for_iplb ()
+            topo.cleanup_for_kspf ()
 
 
+    """
     if options.tcp :
-        topo.bench_random (clients, options.flowdist, "TCPGEN")
+        topo.bench_random_conbination_print (conbination, options.flowdist,
+                                             "TCPGEN")
     else :
-        topo.bench_random (clients, options.flowdist, "FLOWGEN")
+        topo.bench_random_conbination_print (conbination, options.flowdist)
+    """
 
     return
 
@@ -1117,9 +1248,8 @@ if __name__ == '__main__' :
     parser = OptionParser (desc)
 
     parser.add_option (
-        '-t', '--topology', type = "string",
-        default = 'fattree',
-        dest = 'topology',
+        '-r', '--random-graph-size', type = "int", default = 4,
+        dest = 'random_graph_size',
         )
 
     parser.add_option (
@@ -1155,32 +1285,9 @@ if __name__ == '__main__' :
     (options, args) = parser.parse_args ()
 
 
-    if options.topology == 'fattree' :
-        links = fattree
-        clients = fattree_client
-    if options.topology == 'clos' :
-        links = clos
-        clients = clos_client
-    elif options.topology == 'bcube' :
-        links = bcube
-        clients = bcube_client
-    elif options.topology == 'hyperx' :
-        links = hyperx
-        clients = hyperx_client
-    elif options.topology == 'jellyfish' :
-        links = jellyfish
-        clients = jellyfish_client
-    elif options.topology == 'square' :
-        links = square
-        clients = square_client
-    elif options.topology == 'squaretwo' :
-        links = squaretwo
-        clients = squaretwo_client
-    elif options.topology == 'kpath' :
-        links = kpath
-        clients = kpath_client
-    else :
-        print "invalid topology type"
+
+    print "comment: generating random graph"
+    (links, clients) = generate_random_graph3 (options.random_graph_size)
 
 
     if options.bench_seed :
