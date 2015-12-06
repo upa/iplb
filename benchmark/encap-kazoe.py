@@ -26,6 +26,8 @@ BENCH_SEED = None
 
 widthfirst = False
 
+benchnum = None
+
 
 def generate_random_graph3 (portnum = 4) :
 
@@ -898,7 +900,7 @@ class Topology () :
 
         return combinations
 
-    def bench_random_combination_100 (self, client) :
+    def bench_random_combination_opt (self, client) :
 
         send = copy.deepcopy (client)
         recv = copy.deepcopy (client)
@@ -918,7 +920,11 @@ class Topology () :
             recv.remove (dst)
             combinations.append ([self.find_node (src), self.find_node (dst)])
 
-        return combinations[0:100]
+        global benchnum
+        if benchnum == 0 :
+            return combinations
+        else :
+            return combinations[0:benchnum]
 
     def bench_random_combination_print (self, combinations, flowdist,
                                         tool = "FLOWGEN") :
@@ -1029,7 +1035,7 @@ def main (links, clients, options) :
     """
 
     print "comment: generating src->dst combination"
-    combination = topo.bench_random_combination_100 (clients)
+    combination = topo.bench_random_combination_opt (clients)
 
     """
     for root in topo.list_node () :
@@ -1136,7 +1142,15 @@ if __name__ == '__main__' :
         dest = 'widthfirst'
         )
 
+    parser.add_option (
+        '-b', '--benchnum', type = "int",
+        default = 0, dest = 'benchnum',
+        )
+
     (options, args) = parser.parse_args ()
+
+    if options.benchnum > 0:
+        benchnum = options.benchnum
 
 
     if options.widthfirst :
