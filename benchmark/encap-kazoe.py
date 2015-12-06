@@ -241,6 +241,12 @@ class KspfPath () :
         self.deviation_links = []
         self.pathstr = str (path)
 
+        pt = ""
+        for v in path :
+            pt = "%s0%d" % (pt, v.id)
+        self.pathstr = int (pt)
+        #print self.pathstr
+
         return
 
     def __repr__(self):
