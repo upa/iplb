@@ -727,9 +727,11 @@ class Topology () :
                 if not kpath.next_deviation_vertex () :
                     break
 
-            _, kpath = heapq.heappop (clist)
-            if not kpath :
+
+            if len (clist) == 0 :
                 break
+
+            _, kpath = heapq.heappop (clist)
 
             if not check_same_kpath (klist, kpath) :
                 klist.append (kpath)
