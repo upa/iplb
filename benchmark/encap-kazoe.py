@@ -130,7 +130,14 @@ class Link () :
             return self.node1
         elif self.id2 == id :
             return self.node2
-        return
+        return None
+
+    def getneighbor (self, id) :
+        if self.id1 == id :
+            return self.node2
+        elif self.id2 == id :
+            return self.node1
+        return None
 
     def id2addr (self, id, linkbase) :
         # 100.X.X.(1|2)/24
@@ -172,6 +179,7 @@ class Node () :
         self.loaddr = "10.0.%d.%d" % (o3, o4)
 
         self.links = {} # neighbor_id : Link, neighbor_id : Link,
+        self.link_list = [] # [Link, Link, Link]
 
         # is node or switch
         self.isnode = False
@@ -202,16 +210,11 @@ class Node () :
 
     def add_link (self, link) :
         self.links[link.neighbor_id(self.id)] = link
+        self.link_list.append (link)
         return
 
     def list_link (self) :
-        li = []
-        neilist = self.links.keys ()
-        neilist.sort ()
-        for nei in neilist :
-            li.append (self.links[nei])
-
-        return li
+        return self.link_list
 
     def neighbor_link (self, id) :
         if not self.links.has_key (id) :
@@ -226,7 +229,7 @@ class Node () :
             return
         
         link = self.links[self.links.keys ()[0]]
-        return link.getnode (link.neighbor_id (self.id))
+        return link.getneighbor (self.id)
 
 
 class KspfPath () :
@@ -236,6 +239,7 @@ class KspfPath () :
         self.deviation_vertex = self.path[0]
         self.deviation_vertex_index = 0
         self.deviation_links = []
+        self.pathstr = str (path)
 
         return
 
@@ -453,13 +457,10 @@ class Topology () :
         for link in v.list_link () :
 
             # check for kspf dijkstra
-            nei = link.getnode (link.neighbor_id (v.id))
+            nei = link.getneighbor (v.id)
             #nei = self.find_node (link.neighbor_id (v.id))
 
-            if nei.isnode :
-                continue
-
-            if nei.deviation_node :
+            if nei.isnode or nei.deviation_node :
                 continue
 
             if nei.spf_state == SPF_STATE_NOVISIT :
@@ -589,7 +590,7 @@ class Topology () :
                 return
 
             for link in v.list_link () :
-                nextv = link.getnode (link.neighbor_id (v.id))
+                nextv = link.getneighbor (v.id)
 
                 if nextv.spf_state == SPF_STATE_NOVISIT :
                     nextv.spf_state = SPF_STATE_VISITED
@@ -641,7 +642,7 @@ class Topology () :
             #print "try link %d" % src.id, link
             is_deviated = False
 
-            if link.getnode (link.neighbor_id (src.id)) in kpath.path :
+            if link.getneighbor (src.id) in kpath.path :
             #if self.find_node (link.neighbor_id (src.id)) in kpath.path :
                 #print "    in kpath"
                 is_deviated = True
@@ -653,7 +654,7 @@ class Topology () :
             if is_deviated :
                 continue
 
-            next = link.getnode (link.neighbor_id (src.id))
+            next = link.getneighbor (src.id)
             #next = self.find_node (link.neighbor_id (src.id))
 
             if not widthfirst :
@@ -694,7 +695,7 @@ class Topology () :
 
         def check_same_kpath (klist, kpath) :
             for kp in klist :
-                if str (kp) == str (kpath) :
+                if kp.pathstr == kpath.pathstr :
                     return True
             return False
 
@@ -731,7 +732,7 @@ class Topology () :
                     #print "kipath", kipath
 
                 if (kipath
-                    and not check_same_kpath (clist, kipath)
+                    #and not check_same_kpath (clist, kipath)
                     and not check_same_kpath (klist, kipath)):
                     heapq.heappush (clist, (len (kipath.path), kipath))
 
@@ -744,8 +745,8 @@ class Topology () :
 
             _, kpath = heapq.heappop (clist)
 
-            if not check_same_kpath (klist, kpath) :
-                klist.append (kpath)
+            #if not check_same_kpath (klist, kpath) :
+            klist.append (kpath)
 
         #print >> sys.stderr, "calculated k-shortestpaths "
         #print >> sys.stderr, '\n'.join (map (lambda x: str (x), klist))
