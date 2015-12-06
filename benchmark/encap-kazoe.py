@@ -3,6 +3,7 @@
 import sys
 import copy
 import time
+import heapq
 import random
 import operator
 from optparse import OptionParser
@@ -21,6 +22,8 @@ SPF_STATE_VISITED = 2
 
 RANDOM_SEED = 11
 BENCH_SEED = None
+
+hogehoge = 0
 
 
 def generate_random_graph3 (portnum = 4) :
@@ -415,7 +418,7 @@ class Topology () :
                 nei.spf_cost = v.spf_cost + 1
                 nei.spf_state = SPF_STATE_CANDIDATE
                 nei.spf_incoming.add (v)
-                candidate.append (nei)
+                heapq.heappush (candidate, (nei.spf_cost, nei))
 
             elif (nei.spf_state == SPF_STATE_CANDIDATE and
                   nei.spf_cost > v.spf_cost + 1) :
@@ -435,23 +438,17 @@ class Topology () :
 
     def calculate_spf_candidate_decide (self, candidate) :
 
-        distance = -1
-        next = None
+        _, v = heapq.heappop (candidate)
 
-        for v in candidate :
-            if not next or distance < 0 :
-                next = v
-                distance = v.spf_cost
-            elif v.spf_cost < distance :
-                next = v
-                distance = v.spf_cost
+        global hogehoge
+        if hogehoge > 5 : sys.exit (1)
 
-        if not next :
+        if not v :
             print "candidate_decide failed"
             sys.exit (1)
             return
 
-        return next
+        return v
 
 
     def calculate_spf (self, root) :
@@ -459,7 +456,7 @@ class Topology () :
         self.cleanup_for_spf ()
 
         candidate = []
-        candidate.append (root)
+        heapq.heappush (candidate, (0, root))
 
         while len (candidate) > 0 :
 
@@ -468,7 +465,6 @@ class Topology () :
 
             # process decided next vertex
             next.spf_state = SPF_STATE_VISITED
-            candidate.remove (next)
 
             if not self.ecmp :
                 # if ecmp disabled, one incoming having smallest id is selected
@@ -501,7 +497,7 @@ class Topology () :
         self.cleanup_for_spf ()
 
         candidate = []
-        candidate.append (root)
+        heapq.heappush (candidate, (0, root))
 
         while len (candidate) > 0 :
 
@@ -510,7 +506,7 @@ class Topology () :
 
             # process decided next vertex
             next.spf_state = SPF_STATE_VISITED
-            candidate.remove (next)
+
             if next.id == dst.id :
                 # destination is decided!!
                 return
