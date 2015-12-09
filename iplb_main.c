@@ -299,9 +299,9 @@ find_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 
 	dst2prefix (af, dst, len, &prefix);
 
-	read_lock_bh (&rt->lock);
+	//read_lock_bh (&rt->lock);
 	pn = patricia_search_best (rt->rtable, &prefix);
-	read_unlock_bh (&rt->lock);
+	//read_unlock_bh (&rt->lock);
 
 	if (pn)
 		return pn->data;
@@ -317,9 +317,9 @@ find_relay_tuple_exact (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 
 	dst2prefix (af, dst, len, &prefix);
 
-	read_lock_bh (&rt->lock);
+	//read_lock_bh (&rt->lock);
 	pn = patricia_search_exact (rt->rtable, &prefix);
-	read_unlock_bh (&rt->lock);
+	//read_unlock_bh (&rt->lock);
 
 	if (pn)
 		return pn->data;
@@ -340,12 +340,12 @@ add_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 
 	dst2prefix (af, dst, len, prefix);
 
-	write_lock_bh (&rt->lock);
+	//write_lock_bh (&rt->lock);
 	pn = patricia_lookup (rt->rtable, prefix);
 
 
 	if (pn->data != NULL) {
-		write_unlock_bh (&rt->lock);
+		//write_unlock_bh (&rt->lock);
 		return pn->data;
 	}
 
@@ -368,7 +368,7 @@ add_relay_tuple (struct iplb_rtable * rt, u8 af, void * dst, u16 len)
 
 	list_add_rcu (&tuple->list, &rt->rlist);
 
-	write_unlock_bh (&rt->lock);
+	//write_unlock_bh (&rt->lock);
 
 	return tuple;
 }
@@ -401,13 +401,13 @@ destroy_relay_tuple (struct relay_tuple * tuple)
 static void
 delete_relay_tuple (struct iplb_rtable * rt, struct relay_tuple * tuple)
 {
-	write_lock_bh (&rt->lock);
+	//write_lock_bh (&rt->lock);
 
 	tuple->patricia->data = NULL;
 	patricia_remove (rt->rtable, tuple->patricia);
 	destroy_relay_tuple (tuple);
 
-	write_unlock_bh (&rt->lock);
+	//write_unlock_bh (&rt->lock);
 
 	return;
 }
@@ -599,7 +599,7 @@ find_next_relay_addr_from_tuple (struct relay_tuple * tuple)
 	if (tuple->relay_count == 0)
 		return NULL;
 
-	write_lock_bh (&tuple->lock_rr);
+	//write_lock_bh (&tuple->lock_rr);
 
 	for (idx = tuple->relay_rr + 1; tuple->relay_table[idx] == NULL;) {
 		if (idx == tuple->relay_rr) {
@@ -612,7 +612,7 @@ find_next_relay_addr_from_tuple (struct relay_tuple * tuple)
 
 	tuple->relay_rr = idx;
 
-	write_unlock_bh (&tuple->lock_rr);
+	//write_unlock_bh (&tuple->lock_rr);
 
 	return tuple->relay_table[idx];
 }
@@ -2559,6 +2559,8 @@ iplb_nl_cmd_prefix4_flush (struct sk_buff * skb, struct genl_info * info)
 	 * Clear_Patricia() can be use. but after Clear_Patricia() called,
 	 * patricia_lookup() causes NULL pointer dereference...
 	 */
+
+	printk (KERN_INFO "iplb: delete all prefixes\n");
 
 	list_for_each_safe (p, tmp, &rtable4.rlist) {
 		tuple = list_entry (p, struct relay_tuple, list);
